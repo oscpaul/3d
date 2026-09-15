@@ -195,14 +195,17 @@ function DPad({
   runMode: boolean;
   onToggleRun: () => void;
 }) {
+  // clamp() shrinks these on narrow/mobile viewports while staying capped
+  // at the original 56px on desktop — no JS viewport detection needed.
+  const btnSize = "clamp(42px, 11vw, 56px)";
   const btnStyle: CSSProperties = {
-    width: 56,
-    height: 56,
+    width: btnSize,
+    height: btnSize,
     borderRadius: 12,
     border: "none",
     background: "rgba(255,255,255,0.15)",
     color: "white",
-    fontSize: 22,
+    fontSize: "clamp(16px, 4.5vw, 22px)",
     touchAction: "none",
     userSelect: "none",
     WebkitTouchCallout: "none",
@@ -214,8 +217,8 @@ function DPad({
         left: 16,
         bottom: 16,
         display: "grid",
-        gridTemplateColumns: "repeat(3, 56px)",
-        gridTemplateRows: "repeat(3, 56px)",
+        gridTemplateColumns: `repeat(3, ${btnSize})`,
+        gridTemplateRows: `repeat(3, ${btnSize})`,
         gap: 6,
       }}
     >
@@ -248,12 +251,12 @@ function DPad({
 function ActionBar({ onAction }: { onAction: (action: string) => void }) {
   const buttons = [...STATE_BUTTONS, ...EMOTE_BUTTONS];
   const btnStyle: CSSProperties = {
-    padding: "10px 14px",
+    padding: "clamp(6px, 2vw, 10px) clamp(9px, 3vw, 14px)",
     borderRadius: 10,
     border: "none",
     background: "rgba(255,255,255,0.15)",
     color: "white",
-    fontSize: 13,
+    fontSize: "clamp(11px, 2.8vw, 13px)",
     touchAction: "none",
     userSelect: "none",
     WebkitTouchCallout: "none",
