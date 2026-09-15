@@ -1,0 +1,281 @@
+"use client";
+
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { Canvas } from "@react-three/fiber";
+import usePartySocket from "partysocket/react";
+import Robot, { type RobotHandle } from "@/components/Robot";
+
+const ARENA_SIZE = 20;
+const OBSTACLE = { x: 0, z: 0, size: 3 };
+
+type PlayerState = { x: number; z: number };
+type Players = Record<string, PlayerState>;
+type Facings = Record<string, number>;
+
+type ServerMessage =
+  | { type: "state"; selfId: string; players: Players }
+  | {
+      type: "update";
+      id: string;
+      x: number;
+      z: number;
+      dx: number;
+      dz: number;
+      running: boolean;
+    }
+  | { type: "snapback"; x: number; z: number }
+  | { type: "action"; id: string; action: string }
+  | { type: "leave"; id: string };
+
+const DIRECTIONS: Record<string, { dx: number; dz: number }> = {
+  ArrowUp: { dx: 0, dz: -1 },
+  ArrowDown: { dx: 0, dz: 1 },
+  ArrowLeft: { dx: -1, dz: 0 },
+  ArrowRight: { dx: 1, dz: 0 },
+};
+
+// Looping poses vs. one-shot gestures — see components/Robot.tsx for how
+// these are actually played back.
+const STATE_BUTTONS = ["Dance", "Sitting", "Standing", "Death"];
+const EMOTE_BUTTONS = ["Wave", "Jump", "Yes", "No", "Punch", "ThumbsUp"];
+
+export default function GamePage() {
+  const [players, setPlayers] = useState<Players>({});
+  const [facings, setFacings] = useState<Facings>({});
+  const [runMode, setRunMode] = useState(false);
+  const selfIdRef = useRef<string | null>(null);
+  const robotHandles = useRef<Record<string, RobotHandle>>({});
+
+  const socket = usePartySocket({
+    host: process.env.NEXT_PUBLIC_PARTYKIT_HOST!, // e.g. "localhost:1999"
+    room: "game-room",
+    onMessage(event) {
+      const msg: ServerMessage = JSON.parse(event.data);
+
+      switch (msg.type) {
+        case "state": {
+          selfIdRef.current = msg.selfId;
+          setPlayers(msg.players);
+          break;
+        }
+        case "update": {
+          setPlayers((prev) => ({ ...prev, [msg.id]: { x: msg.x, z: msg.z } }));
+          if (msg.dx !== 0 || msg.dz !== 0) {
+            setFacings((prev) => ({ ...prev, [msg.id]: Math.atan2(msg.dx, msg.dz) }));
+          }
+          robotHandles.current[msg.id]?.notifyMove(msg.running);
+          break;
+        }
+        case "snapback": {
+          const selfId = selfIdRef.current;
+          if (!selfId) return;
+          setPlayers((prev) => ({ ...prev, [selfId]: { x: msg.x, z: msg.z } }));
+          break;
+        }
+        case "action": {
+          robotHandles.current[msg.id]?.notifyAction(msg.action);
+          break;
+        }
+        case "leave": {
+          setPlayers((prev) => {
+            const next = { ...prev };
+            delete next[msg.id];
+            return next;
+          });
+          delete robotHandles.current[msg.id];
+          break;
+        }
+      }
+    },
+  });
+
+  const requestMove = useCallback(
+    (dx: number, dz: number) => {
+      const selfId = selfIdRef.current;
+      if (!selfId) return;
+
+      // Optimistic local prediction for responsiveness — the server is still
+      // the source of truth and will snap us back if this guess is wrong.
+      setPlayers((prev) => {
+        const current = prev[selfId];
+        if (!current) return prev;
+        return { ...prev, [selfId]: { x: current.x + dx, z: current.z + dz } };
+      });
+      if (dx !== 0 || dz !== 0) {
+        setFacings((prev) => ({ ...prev, [selfId]: Math.atan2(dx, dz) }));
+      }
+      robotHandles.current[selfId]?.notifyMove(runMode);
+
+      socket.send(JSON.stringify({ type: "move", dx, dz, running: runMode }));
+    },
+    [socket, runMode]
+  );
+
+  const requestAction = useCallback(
+    (action: string) => {
+      const selfId = selfIdRef.current;
+      if (!selfId) return;
+      robotHandles.current[selfId]?.notifyAction(action); // optimistic, cosmetic only
+      socket.send(JSON.stringify({ type: "action", action }));
+    },
+    [socket]
+  );
+
+  // Desktop keyboard support.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      const dir = DIRECTIONS[e.key];
+      if (!dir) return;
+      e.preventDefault();
+      requestMove(dir.dx, dir.dz);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [requestMove]);
+
+  // Stop the page from scrolling/zooming under the on-screen touch controls.
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, []);
+
+  return (
+    <div
+      style={{
+        width: "100vw",
+        height: "100dvh",
+        background: "#111",
+        position: "relative",
+        touchAction: "none",
+        overscrollBehavior: "none",
+      }}
+    >
+      <Canvas camera={{ position: [0, 14, 14], fov: 50 }}>
+        <ambientLight intensity={0.7} />
+        <directionalLight position={[5, 10, 5]} intensity={1} />
+
+        <mesh rotation={[-Math.PI / 2, 0, 0]}>
+          <planeGeometry args={[ARENA_SIZE, ARENA_SIZE]} />
+          <meshStandardMaterial color="#2a2a2a" />
+        </mesh>
+
+        <mesh position={[OBSTACLE.x, 0.5, OBSTACLE.z]}>
+          <boxGeometry args={[OBSTACLE.size, 1, OBSTACLE.size]} />
+          <meshStandardMaterial color="red" />
+        </mesh>
+
+        {Object.entries(players).map(([id, p]) => (
+          <Robot
+            key={id}
+            position={[p.x, 0, p.z]}
+            facing={facings[id] ?? 0}
+            color={id === selfIdRef.current ? "#4da6ff" : "#ffa64d"}
+            onReady={(handle) => {
+              robotHandles.current[id] = handle;
+            }}
+          />
+        ))}
+      </Canvas>
+
+      <DPad onMove={requestMove} runMode={runMode} onToggleRun={() => setRunMode((r) => !r)} />
+      <ActionBar onAction={requestAction} />
+    </div>
+  );
+}
+
+function DPad({
+  onMove,
+  runMode,
+  onToggleRun,
+}: {
+  onMove: (dx: number, dz: number) => void;
+  runMode: boolean;
+  onToggleRun: () => void;
+}) {
+  const btnStyle: CSSProperties = {
+    width: 56,
+    height: 56,
+    borderRadius: 12,
+    border: "none",
+    background: "rgba(255,255,255,0.15)",
+    color: "white",
+    fontSize: 22,
+    touchAction: "none",
+    userSelect: "none",
+    WebkitTouchCallout: "none",
+  };
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: 16,
+        bottom: 16,
+        display: "grid",
+        gridTemplateColumns: "repeat(3, 56px)",
+        gridTemplateRows: "repeat(3, 56px)",
+        gap: 6,
+      }}
+    >
+      <div />
+      <button style={btnStyle} onPointerDown={() => onMove(0, -1)}>
+        ↑
+      </button>
+      <div />
+      <button style={btnStyle} onPointerDown={() => onMove(-1, 0)}>
+        ←
+      </button>
+      <button
+        style={{ ...btnStyle, background: runMode ? "#4da6ff" : "rgba(255,255,255,0.15)" }}
+        onPointerDown={onToggleRun}
+      >
+        Run
+      </button>
+      <button style={btnStyle} onPointerDown={() => onMove(1, 0)}>
+        →
+      </button>
+      <div />
+      <button style={btnStyle} onPointerDown={() => onMove(0, 1)}>
+        ↓
+      </button>
+      <div />
+    </div>
+  );
+}
+
+function ActionBar({ onAction }: { onAction: (action: string) => void }) {
+  const buttons = [...STATE_BUTTONS, ...EMOTE_BUTTONS];
+  const btnStyle: CSSProperties = {
+    padding: "10px 14px",
+    borderRadius: 10,
+    border: "none",
+    background: "rgba(255,255,255,0.15)",
+    color: "white",
+    fontSize: 13,
+    touchAction: "none",
+    userSelect: "none",
+    WebkitTouchCallout: "none",
+  };
+  return (
+    <div
+      style={{
+        position: "absolute",
+        right: 16,
+        bottom: 16,
+        display: "flex",
+        flexWrap: "wrap",
+        gap: 6,
+        maxWidth: 220,
+        justifyContent: "flex-end",
+      }}
+    >
+      {buttons.map((b) => (
+        <button key={b} style={btnStyle} onPointerDown={() => onAction(b)}>
+          {b}
+        </button>
+      ))}
+    </div>
+  );
+}

@@ -1,0 +1,6 @@
+{
+  "$schema": "https://www.partykit.io/schema.json",
+  "name": "my-3d-game",
+  "main": "party/server.ts",
+"compatibilityDate": "2026-09-15"
+}
