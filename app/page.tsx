@@ -1,14 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import * as THREE from "three";
 import usePartySocket from "partysocket/react";
 import Robot, { type RobotHandle } from "@/components/Robot";
 
-const ARENA_SIZE = 20;
+const ARENA_SIZE = 200;
 const OBSTACLE = { x: 0, z: 0, size: 3 };
-
-type PlayerState = { x: number; z: number };
+const STRUCTURES = [
+  {
+    ramp: { xStart: 6, xEnd: 12, zMin: -3, zMax: 3, height: 4 },
+    platform: { xMin: 12, xMax: 18, zMin: -3, zMax: 3, height: 4 },
+  },
+  {
+    ramp: { xStart: -20, xEnd: -14, zMin: 10, zMax: 16, height: 6 },
+    platform: { xMin: -14, xMax: -6, zMin: 10, zMax: 16, height: 6 },
+  },
+  // add as many of these as you want — each is fully independent
+];
+type PlayerState = { x: number; y: number; z: number };
 type Players = Record<string, PlayerState>;
 type Facings = Record<string, number>;
 
@@ -19,11 +30,12 @@ type ServerMessage =
       id: string;
       x: number;
       z: number;
+   y: number;        // ← add
       dx: number;
       dz: number;
       running: boolean;
     }
-  | { type: "snapback"; x: number; z: number }
+  | { type: "snapback"; x: number; y: number; z: number }   // ← add y
   | { type: "action"; id: string; action: string }
   | { type: "leave"; id: string };
 
@@ -59,7 +71,7 @@ export default function GamePage() {
           break;
         }
         case "update": {
-          setPlayers((prev) => ({ ...prev, [msg.id]: { x: msg.x, z: msg.z } }));
+  setPlayers((prev) => ({ ...prev, [msg.id]: { x: msg.x, y: msg.y, z: msg.z } }));
           if (msg.dx !== 0 || msg.dz !== 0) {
             setFacings((prev) => ({ ...prev, [msg.id]: Math.atan2(msg.dx, msg.dz) }));
           }
@@ -69,7 +81,7 @@ export default function GamePage() {
         case "snapback": {
           const selfId = selfIdRef.current;
           if (!selfId) return;
-          setPlayers((prev) => ({ ...prev, [selfId]: { x: msg.x, z: msg.z } }));
+  setPlayers((prev) => ({ ...prev, [selfId]: { x: msg.x, y: msg.y, z: msg.z } }));
           break;
         }
         case "action": {
@@ -99,7 +111,7 @@ export default function GamePage() {
       setPlayers((prev) => {
         const current = prev[selfId];
         if (!current) return prev;
-        return { ...prev, [selfId]: { x: current.x + dx, z: current.z + dz } };
+  return { ...prev, [selfId]: { x: current.x + dx, y: current.y, z: current.z + dz } };
       });
       if (dx !== 0 || dz !== 0) {
         setFacings((prev) => ({ ...prev, [selfId]: Math.atan2(dx, dz) }));
@@ -154,6 +166,7 @@ export default function GamePage() {
       }}
     >
       <Canvas camera={{ position: [0, 14, 14], fov: 50 }}>
+  <CameraRig target={selfIdRef.current ? players[selfIdRef.current] ?? null : null} />
         <ambientLight intensity={0.7} />
         <directionalLight position={[5, 10, 5]} intensity={1} />
 
@@ -167,10 +180,40 @@ export default function GamePage() {
           <meshStandardMaterial color="red" />
         </mesh>
 
+{STRUCTURES.map(({ ramp, platform }, i) => (
+  <group key={i}>
+    <mesh
+      position={[
+        (ramp.xStart + ramp.xEnd) / 2,
+        ramp.height / 2,
+        (ramp.zMin + ramp.zMax) / 2,
+      ]}
+      rotation={[0, 0, Math.atan2(ramp.height, ramp.xEnd - ramp.xStart)]}
+    >
+      <boxGeometry
+        args={[Math.hypot(ramp.xEnd - ramp.xStart, ramp.height), 0.4, ramp.zMax - ramp.zMin]}
+      />
+      <meshStandardMaterial color="#888" />
+    </mesh>
+
+    <mesh
+      position={[
+        (platform.xMin + platform.xMax) / 2,
+        platform.height / 2,
+        (platform.zMin + platform.zMax) / 2,
+      ]}
+    >
+      <boxGeometry
+        args={[platform.xMax - platform.xMin, platform.height, platform.zMax - platform.zMin]}
+      />
+      <meshStandardMaterial color="#666" />
+    </mesh>
+  </group>
+))}
         {Object.entries(players).map(([id, p]) => (
           <Robot
             key={id}
-            position={[p.x, 0, p.z]}
+position={[p.x, p.y, p.z]}
             facing={facings[id] ?? 0}
             color={id === selfIdRef.current ? "#4da6ff" : "#ffa64d"}
             onReady={(handle) => {
@@ -179,13 +222,49 @@ export default function GamePage() {
           />
         ))}
       </Canvas>
+<CoordsDisplay position={selfIdRef.current ? players[selfIdRef.current] ?? null : null} />
 
       <DPad onMove={requestMove} runMode={runMode} onToggleRun={() => setRunMode((r) => !r)} />
       <ActionBar onAction={requestAction} />
     </div>
   );
 }
+function CameraRig({ target }: { target: PlayerState | null }) {
+  const { camera } = useThree();
+  const desired = useRef(new THREE.Vector3());
 
+  useFrame(() => {
+    if (!target) return;
+    desired.current.set(target.x, target.y + 14, target.z + 14);
+    camera.position.lerp(desired.current, 0.1);
+    camera.lookAt(target.x, target.y, target.z);
+  });
+
+  return null;
+}
+function CoordsDisplay({ position }: { position: PlayerState | null }) {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 12,
+        left: 12,
+        padding: "6px 10px",
+        borderRadius: 8,
+        background: "rgba(0,0,0,0.5)",
+        color: "white",
+        fontSize: 13,
+        fontFamily: "monospace",
+        userSelect: "none",
+        pointerEvents: "none",
+      }}
+    >
+      x: {position ? position.x.toFixed(1) : "—"} &nbsp;
+      y: {position ? position.y.toFixed(1) : "—"} &nbsp;
+      z: {position ? position.z.toFixed(1) : "—"}
+    </div>
+  );
+}
 function DPad({
   onMove,
   runMode,
