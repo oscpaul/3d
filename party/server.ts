@@ -26,18 +26,20 @@ const STRUCTURES = [
   // add as many of these as you want — each is fully independent
 ];
 
-function isOnPlatform(x, z) {
+function isOnPlatform(x: number, z: number): boolean {
   return STRUCTURES.some(
-    ({ platform }) => x >= platform.xMin && x <= platform.xMax && z >= platform.zMin && z <= platform.zMax
+    ({ platform }) =>
+      x >= platform.xMin && x <= platform.xMax && z >= platform.zMin && z <= platform.zMax
   );
 }
 
-function isOnRamp(x, z) {
+function isOnRamp(x: number, z: number): boolean {
   return STRUCTURES.some(
     ({ ramp }) => x >= ramp.xStart && x <= ramp.xEnd && z >= ramp.zMin && z <= ramp.zMax
   );
 }
-function getHeightAt(x, z) {
+
+function getHeightAt(x: number, z: number): number {
   for (const { ramp, platform } of STRUCTURES) {
     if (x >= platform.xMin && x <= platform.xMax && z >= platform.zMin && z <= platform.zMax) {
       return platform.height;
