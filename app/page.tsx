@@ -53,6 +53,8 @@ const STATE_BUTTONS = ["Dance", "Sitting", "Standing", "Death"];
 const EMOTE_BUTTONS = ["Wave", "Jump", "Yes", "No", "Punch", "ThumbsUp"];
 
 export default function GamePage() {
+  console.log("connecting to", process.env.NEXT_PUBLIC_PARTYKIT_HOST); // ← add this line here
+
   const [players, setPlayers] = useState<Players>({});
   const [facings, setFacings] = useState<Facings>({});
   const [runMode, setRunMode] = useState(false);
