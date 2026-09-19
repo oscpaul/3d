@@ -65,11 +65,11 @@ const [ballPosition, setBallPosition] = useState<PlayerState | null>(null);
   const socket = usePartySocket({
     host: process.env.NEXT_PUBLIC_PARTYKIT_HOST!, // e.g. "localhost:1999"
     room: "game-room",
-    onMessage(event) {
-      const msg: ServerMessage = JSON.parse(event.data);
+onMessage(event) {
+  const msg: ServerMessage = JSON.parse(event.data);
+  console.log("GOT MESSAGE:", msg.type, msg); // ← add this
 
-      switch (msg.type) {
-
+  switch (msg.type) {
 case "ball": {
   setBallPosition({ x: msg.x, y: msg.y, z: msg.z });
   break;
