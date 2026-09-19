@@ -37,7 +37,8 @@ type ServerMessage =
     }
   | { type: "snapback"; x: number; y: number; z: number }   // ← add y
   | { type: "action"; id: string; action: string }
-  | { type: "leave"; id: string };
+  | { type: "leave"; id: string }
+  | { type: "ball"; x: number; y: number; z: number };   // ← add
 
 const DIRECTIONS: Record<string, { dx: number; dz: number }> = {
   ArrowUp: { dx: 0, dz: -1 },
@@ -57,6 +58,7 @@ export default function GamePage() {
   const [runMode, setRunMode] = useState(false);
   const selfIdRef = useRef<string | null>(null);
   const robotHandles = useRef<Record<string, RobotHandle>>({});
+const [ballPosition, setBallPosition] = useState<PlayerState | null>(null);
 
   const socket = usePartySocket({
     host: process.env.NEXT_PUBLIC_PARTYKIT_HOST!, // e.g. "localhost:1999"
@@ -65,11 +67,17 @@ export default function GamePage() {
       const msg: ServerMessage = JSON.parse(event.data);
 
       switch (msg.type) {
+
+case "ball": {
+  setBallPosition({ x: msg.x, y: msg.y, z: msg.z });
+  break;
+}
         case "state": {
           selfIdRef.current = msg.selfId;
           setPlayers(msg.players);
           break;
         }
+
         case "update": {
   setPlayers((prev) => ({ ...prev, [msg.id]: { x: msg.x, y: msg.y, z: msg.z } }));
           if (msg.dx !== 0 || msg.dz !== 0) {
@@ -179,6 +187,13 @@ export default function GamePage() {
           <boxGeometry args={[OBSTACLE.size, 1, OBSTACLE.size]} />
           <meshStandardMaterial color="red" />
         </mesh>
+
+{ballPosition && (
+  <mesh position={[ballPosition.x, ballPosition.y, ballPosition.z]}>
+    <sphereGeometry args={[0.5, 32, 32]} />
+    <meshStandardMaterial color="#ff6633" />
+  </mesh>
+)}
 
 {STRUCTURES.map(({ ramp, platform }, i) => (
   <group key={i}>

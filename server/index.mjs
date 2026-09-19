@@ -139,6 +139,42 @@ function handleAction(id, msg) {
   broadcast({ type: "action", id, action: msg.action });
 }
 
+// ============================================================================
+// ===================== HELLO WORLD BALL PHYSICS ============================
+// No physics engine at all — just gravity + a floor bounce, so there's a
+// ball that visibly works end-to-end (server -> broadcast -> client render)
+// before anything fancier (rolling, ramps, obstacle collision, a real
+// physics engine) gets added. Deliberately the simplest thing that works.
+// ============================================================================
+
+const BALL_RADIUS = 0.5;
+const BALL_SPAWN = { x: 0, y: 8, z: 0 };
+const BALL_TICK_HZ = 30;
+const BALL_GRAVITY = -9.81;
+const BALL_BOUNCE = 0.6; // 0 = no bounce, 1 = bounces forever
+
+const ball = { x: BALL_SPAWN.x, y: BALL_SPAWN.y, z: BALL_SPAWN.z, vy: 0 };
+
+function tickBall() {
+  const dt = 1 / BALL_TICK_HZ;
+
+  ball.vy += BALL_GRAVITY * dt;
+  ball.y += ball.vy * dt;
+
+  const floor = BALL_RADIUS; // ball rests with its center one radius above y = 0
+  if (ball.y <= floor) {
+    ball.y = floor;
+    ball.vy = -ball.vy * BALL_BOUNCE;
+    if (Math.abs(ball.vy) < 0.5) ball.vy = 0; // stop tiny endless bounces
+  }
+
+  broadcast({ type: "ball", x: ball.x, y: ball.y, z: ball.z });
+}
+
+setInterval(tickBall, 1000 / BALL_TICK_HZ);
+
+// =============================== END SECTION ================================
+
 // Plain HTTP server: also answers Cloud Run's health-check GET requests.
 const server = http.createServer((req, res) => {
   res.writeHead(200, { "Content-Type": "text/plain" });
@@ -161,6 +197,10 @@ wss.on("connection", (ws) => {
   );
 
   broadcast({ type: "update", id, x: 0, y: 0, z: 5, dx: 0, dz: 0, running: false }, id);
+
+  // ---- HELLO WORLD BALL PHYSICS: tell the new client where the ball is ----
+  ws.send(JSON.stringify({ type: "ball", x: ball.x, y: ball.y, z: ball.z }));
+  // ---- end ----
 
   ws.on("message", (raw) => {
     let msg;
