@@ -197,10 +197,6 @@ case "ball": {
           <meshStandardMaterial color="red" />
         </mesh>
 
-<mesh position={[11, 2.5, 20]}>
-  <boxGeometry args={[10, 5, 10]} />
-  <meshStandardMaterial color="red" />
-</mesh>
 
 
 
