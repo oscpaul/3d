@@ -7,8 +7,14 @@ import usePartySocket from "partysocket/react";
 import Robot, { type RobotHandle } from "@/components/Robot";
 
 
-
-
+// Must match NEW_RAMP in the server exactly — this is only used for
+// rendering, the server is authoritative for collision/height.
+// A standalone wedge-shaped ramp, positioned at (6, 0, 15) — clear of both
+// STRUCTURES entries since it sits at a different z than STRUCTURES[0]
+// and a different x than STRUCTURES[1].
+// Must match NEW_RAMP in the server exactly — this is only used for
+// rendering, the server is authoritative for collision/height.
+const NEW_RAMP = { xStart: 6, xEnd: 16, zMin: 15, zMax: 25, height: 5 };
 const ARENA_SIZE = 200;
 const OBSTACLE = { x: 0, z: 0, size: 3 };
 const STRUCTURES = [
@@ -56,7 +62,6 @@ const STATE_BUTTONS = ["Dance", "Sitting", "Standing", "Death"];
 const EMOTE_BUTTONS = ["Wave", "Jump", "Yes", "No", "Punch", "ThumbsUp"];
 
 export default function GamePage() {
-  console.log("connecting to", process.env.NEXT_PUBLIC_PARTYKIT_HOST); // ← add this line here
 
   const [players, setPlayers] = useState<Players>({});
   const [facings, setFacings] = useState<Facings>({});
@@ -70,7 +75,6 @@ const [ballPosition, setBallPosition] = useState<PlayerState | null>(null);
     room: "game-room",
 onMessage(event) {
   const msg: ServerMessage = JSON.parse(event.data);
-  console.log("GOT MESSAGE:", msg.type, msg); // ← add this
 
   switch (msg.type) {
 case "ball": {
@@ -230,6 +234,40 @@ case "ball": {
     </mesh>
   </group>
 ))}
+
+
+
+<mesh position={[NEW_RAMP.xStart, 0, NEW_RAMP.zMin]}>
+  <bufferGeometry>
+    <bufferAttribute
+      attach="attributes-position"
+      count={6}
+      array={new Float32Array([
+        0, 0, 0,
+        0, 0, NEW_RAMP.zMax - NEW_RAMP.zMin,
+        NEW_RAMP.xEnd - NEW_RAMP.xStart, 0, 0,
+        NEW_RAMP.xEnd - NEW_RAMP.xStart, 0, NEW_RAMP.zMax - NEW_RAMP.zMin,
+        NEW_RAMP.xEnd - NEW_RAMP.xStart, NEW_RAMP.height, 0,
+        NEW_RAMP.xEnd - NEW_RAMP.xStart, NEW_RAMP.height, NEW_RAMP.zMax - NEW_RAMP.zMin,
+      ])}
+      itemSize={3}
+    />
+    <bufferAttribute
+      attach="index"
+      count={27}
+      array={new Uint16Array([
+        0, 1, 2,  1, 3, 2,       // bottom face
+        0, 2, 4,  2, 5, 4,  2, 3, 5,  // sloped face
+        0, 4, 1,  4, 5, 1,        // one end
+        2, 3, 4,  3, 5, 4,        // other end (approximate cap)
+      ])}
+      itemSize={1}
+    />
+  </bufferGeometry>
+  <meshStandardMaterial color="#999" side={THREE.DoubleSide} />
+</mesh>
+
+
         {Object.entries(players).map(([id, p]) => (
           <Robot
             key={id}
