@@ -3,6 +3,7 @@ import { WebSocketServer } from "ws";
 import RAPIER from "@dimforge/rapier3d-compat";
 await RAPIER.init();
 const BALL_TICK_HZ = 30;
+const OBSTACLE = { minX: -1.5, maxX: 1.5, minZ: -1.5, maxZ: 1.5 };
 
 // ============================================================================
 // SERVER-AUTHORITATIVE WORLD DEFINITION — identical logic to party/server.ts,
@@ -12,6 +13,18 @@ const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
 world.timestep = 1 / BALL_TICK_HZ;
 const floorBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -1, 0));
 world.createCollider(RAPIER.ColliderDesc.cuboid(100, 1, 100), floorBody);
+
+
+
+const obstacleBody = world.createRigidBody(
+  RAPIER.RigidBodyDesc.fixed().setTranslation(0, 0, 0)
+);
+
+world.createCollider(
+  RAPIER.ColliderDesc.cuboid(OBSTACLE.maxX, 1, OBSTACLE.maxZ),
+  obstacleBody
+);
+
 
 // Spawn the ball above the new ramp (xStart..xEnd = 30..40) so it actually
 // rolls down it instead of just dropping onto flat ground.
@@ -39,9 +52,10 @@ world.createCollider(
 
 const ARENA_BOUNDS = { minX: -100, maxX: 100, minZ: -100, maxZ: 100 };
 
-const OBSTACLE = { minX: -1.5, maxX: 1.5, minZ: -1.5, maxZ: 1.5 };
 
 const PLAYER_HALF_SIZE = 0.5;
+const PLAYER_HEIGHT = 2;
+const PLAYER_RADIUS = 0.5;
 const MOVE_STEP = 1;
 
 const STRUCTURES = [
@@ -87,7 +101,7 @@ world.createCollider(RAPIER.ColliderDesc.convexHull(rampVertices), newRampBody);
 
 
 
-
+/*
 function isOnPlatform(x, z) {
   return STRUCTURES.some(
     ({ platform }) =>
@@ -113,6 +127,7 @@ function getHeightAt(x, z) {
   }
   return 0;
 }
+*/
 
 // NOTE: this in-memory Map is the entire game state. Cloud Run must be
 // pinned to exactly ONE running instance (see deploy command) or different
@@ -120,6 +135,35 @@ function getHeightAt(x, z) {
 // game states.
 const players = new Map(); // id -> { x, y, z }
 const sockets = new Map(); // id -> ws
+const playerBodies = new Map();
+const playerColliders = new Map();
+const playerControllers = new Map();
+
+function createPlayerPhysics(id, x, y, z) {
+  const body = world.createRigidBody(
+    RAPIER.RigidBodyDesc.kinematicPositionBased()
+      .setTranslation(x, y + PLAYER_HEIGHT / 2, z)
+  );
+
+  const collider = world.createCollider(
+    RAPIER.ColliderDesc.capsule(
+      PLAYER_HEIGHT / 2 - PLAYER_RADIUS,
+      PLAYER_RADIUS
+    ),
+    body
+  );
+
+  const controller = world.createCharacterController(0.01);
+controller.setApplyImpulsesToDynamicBodies(true);
+  controller.setMaxSlopeClimbAngle(0.9);
+  controller.setMinSlopeSlideAngle(1.0);
+
+  playerBodies.set(id, body);
+  playerColliders.set(id, collider);
+  playerControllers.set(id, controller);
+}
+
+
 let nextId = 1;
 
 function isValidPosition(x, z) {
@@ -172,6 +216,53 @@ function broadcast(msg, excludeId) {
   }
 }
 
+
+
+
+
+function movePlayerPhysics(id, dx, dz) {
+  const body = playerBodies.get(id);
+  const collider = playerColliders.get(id);
+  const controller = playerControllers.get(id);
+
+  if (!body || !collider || !controller) return null;
+
+  const current = body.translation();
+
+  const desiredMovement = {
+    x: dx * MOVE_STEP,
+    y: 0,
+    z: dz * MOVE_STEP,
+  };
+
+  controller.computeColliderMovement(
+    collider,
+    desiredMovement
+  );
+
+  const movement = controller.computedMovement();
+
+  const nextX = current.x + movement.x;
+  const nextY = current.y + movement.y;
+  const nextZ = current.z + movement.z;
+
+  body.setNextKinematicTranslation({
+    x: nextX,
+    y: nextY,
+    z: nextZ,
+  });
+
+  return {
+    x: nextX,
+    y: nextY - PLAYER_HEIGHT / 2,
+    z: nextZ,
+  };
+}
+
+
+
+
+
 function handleMove(id, msg) {
   const current = players.get(id);
   if (!current) return;
@@ -179,23 +270,25 @@ function handleMove(id, msg) {
   const dx = clampDelta(msg.dx);
   const dz = clampDelta(msg.dz);
   const running = Boolean(msg.running);
-  const nextX = current.x + dx * MOVE_STEP;
-  const nextZ = current.z + dz * MOVE_STEP;
 
-  const nextY = getHeightAt(nextX, nextZ);
-  const enteringPlatform = isOnPlatform(nextX, nextZ);
-  const cameFromRampOrPlatform = isOnRamp(current.x, current.z) || isOnPlatform(current.x, current.z);
-  const platformEntryBlocked = enteringPlatform && !cameFromRampOrPlatform;
+  const position = movePlayerPhysics(id, dx, dz);
 
-  if (isValidPosition(nextX, nextZ) && !platformEntryBlocked) {
-    players.set(id, { x: nextX, y: nextY, z: nextZ });
-    broadcast({ type: "update", id, x: nextX, y: nextY, z: nextZ, dx, dz, running });
-  } else {
-    sockets
-      .get(id)
-      ?.send(JSON.stringify({ type: "snapback", x: current.x, y: current.y, z: current.z }));
-  }
+  if (!position) return;
+
+  players.set(id, position);
+
+  broadcast({
+    type: "update",
+    id,
+    x: position.x,
+    y: position.y,
+    z: position.z,
+    dx,
+    dz,
+    running,
+  });
 }
+
 
 function handleAction(id, msg) {
   if (!ALLOWED_ACTIONS.has(msg.action)) return;
@@ -235,9 +328,18 @@ function respawnBall() {
 }
 
 function tickBall() {
-  world.step();
+  for (const [id, body] of playerBodies) {
+    const player = players.get(id);
+    if (!player) continue;
 
-  const pos = ballBody.translation();
+    body.setNextKinematicTranslation({
+      x: player.x,
+      y: player.y + PLAYER_HEIGHT / 2,
+      z: player.z,
+    });
+  }
+
+  world.step();  const pos = ballBody.translation();
   const linvel = ballBody.linvel();
   const angvel = ballBody.angvel();
   const speed = Math.hypot(linvel.x, linvel.y, linvel.z);
@@ -280,7 +382,9 @@ const wss = new WebSocketServer({ server });
 wss.on("connection", (ws) => {
   const id = `p${nextId++}`;
   sockets.set(id, ws);
-  players.set(id, { x: 0, y: 0, z: 5 }); // always spawn somewhere known-valid
+players.set(id, { x: 0, y: 0, z: 5 });
+createPlayerPhysics(id, 0, 0, 5);
+
 
   ws.send(
     JSON.stringify({
@@ -306,12 +410,22 @@ ws.send(JSON.stringify({ type: "ball", x: ballBody.translation().x, y: ballBody.
     else if (msg.type === "action") handleAction(id, msg);
   });
 
-  ws.on("close", () => {
-    players.delete(id);
-    sockets.delete(id);
-    broadcast({ type: "leave", id });
-  });
-});
+ws.on("close", () => {
+  const body = playerBodies.get(id);
 
+  if (body) {
+    world.removeRigidBody(body);
+  }
+
+  playerBodies.delete(id);
+  playerColliders.delete(id);
+  playerControllers.delete(id);
+
+  players.delete(id);
+  sockets.delete(id);
+
+  broadcast({ type: "leave", id });
+});
+}); 
 const port = process.env.PORT || 8080;
 server.listen(port, () => console.log(`Game server listening on ${port}`));
