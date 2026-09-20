@@ -381,11 +381,11 @@ function tickBall() {
 
   // Hard safety net: if it ever strays far from the ramp (regardless of
   // speed), reset immediately instead of letting it roll off indefinitely.
-    const strayedTooFar =
-    pos.x < NEW_RAMP.xStart - 5 ||
-    pos.x > NEW_RAMP.xEnd + 5 ||
-    pos.z < NEW_RAMP.zMin - 5 ||
-    pos.z > NEW_RAMP.zMax + 5;
+const strayedTooFar =
+  pos.x < -4 ||
+  pos.x > 21 ||
+  pos.z < 10 ||
+  pos.z > 30;
 
   if (strayedTooFar) {
     respawnBall();

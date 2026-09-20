@@ -17,6 +17,12 @@ import Robot, { type RobotHandle } from "@/components/Robot";
 const NEW_RAMP = { xStart: 6, xEnd: 16, zMin: 15, zMax: 25, height: 5 };
 const ARENA_SIZE = 200;
 const OBSTACLE = { x: 0, z: 0, size: 3 };
+const BALL_BOUNDARY = {
+minX: -4,
+  maxX: NEW_RAMP.xEnd + 5,
+  minZ: NEW_RAMP.zMin - 5,
+  maxZ: NEW_RAMP.zMax + 5,
+};
 const STRUCTURES = [
   {
     ramp: { xStart: 6, xEnd: 12, zMin: -3, zMax: 3, height: 4 },
@@ -196,6 +202,30 @@ case "ball": {
           <boxGeometry args={[OBSTACLE.size, 1, OBSTACLE.size]} />
           <meshStandardMaterial color="red" />
         </mesh>
+
+
+
+
+
+<lineLoop
+  position={[0, 0.05, 0]}
+>
+  <bufferGeometry>
+    <bufferAttribute
+      attach="attributes-position"
+      args={[
+        new Float32Array([
+          BALL_BOUNDARY.minX, 0, BALL_BOUNDARY.minZ,
+          BALL_BOUNDARY.maxX, 0, BALL_BOUNDARY.minZ,
+          BALL_BOUNDARY.maxX, 0, BALL_BOUNDARY.maxZ,
+          BALL_BOUNDARY.minX, 0, BALL_BOUNDARY.maxZ,
+        ]),
+        3,
+      ]}
+    />
+  </bufferGeometry>
+  <lineBasicMaterial color="red" linewidth={3} />
+</lineLoop>
 
 
 
