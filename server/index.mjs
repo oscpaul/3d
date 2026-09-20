@@ -42,8 +42,8 @@ const ballBody = world.createRigidBody(
     // alone — it would roll at ~constant speed forever instead of settling.
     // These bleed off speed/spin so it actually comes to rest near the
     // base of the ramp, goes to sleep, and triggers the respawn.
-    .setLinearDamping(1.5)
-    .setAngularDamping(2)
+   .setLinearDamping(0.8)
+    .setAngularDamping(1)
 );
 world.createCollider(
   RAPIER.ColliderDesc.ball(0.5).setRestitution(0.1).setFriction(0.8),
@@ -272,6 +272,38 @@ function handleMove(id, msg) {
   const running = Boolean(msg.running);
 
   const position = movePlayerPhysics(id, dx, dz);
+const ballPos = ballBody.translation();
+const playerPos = {
+  x: position.x,
+  y: position.y + PLAYER_HEIGHT / 2,
+  z: position.z,
+};
+
+if (playerPos) {
+  const distance = Math.hypot(
+    playerPos.x - ballPos.x,
+    playerPos.z - ballPos.z
+  );
+
+if ((dx !== 0 || dz !== 0) && distance < 1.5) {
+  lastBallInteractionMs = Date.now();
+  atRestSinceMs = null;
+
+  const kickStrength = 5;
+
+  ballBody.applyImpulse(
+    {
+      x: dx * kickStrength,
+    y: 0.5,
+      z: dz * kickStrength,
+    },
+    true
+  );
+}
+}
+
+
+
 
   if (!position) return;
 
@@ -307,8 +339,7 @@ const BALL_RADIUS = 0.5;
 
 const BALL_GRAVITY = -9.81;
 const BALL_BOUNCE = 0.6; // 0 = no bounce, 1 = bounces forever
-const BALL_RESPAWN_DELAY_SEC = 2.5; // add next to the other BALL_ constants
-
+const BALL_RESPAWN_DELAY_SEC = 10;
 
 
 // Tracks how long the ball has been at rest; only reset once it's been
@@ -318,13 +349,15 @@ const BALL_RESPAWN_DELAY_SEC = 2.5; // add next to the other BALL_ constants
 // using actual velocity instead — much more reliable for triggering respawn.
 const AT_REST_SPEED = 0.3; // units/sec, both linear and angular
 let atRestSinceMs = null;
+let lastBallInteractionMs = Date.now();
 
 function respawnBall() {
   ballBody.setTranslation(BALL_SPAWN, true);
   ballBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
   ballBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
   ballBody.wakeUp();
-  atRestSinceMs = null;
+atRestSinceMs = null;
+lastBallInteractionMs = Date.now();
 }
 
 function tickBall() {
@@ -356,15 +389,23 @@ function tickBall() {
 
   if (strayedTooFar) {
     respawnBall();
-  } else if (isAtRest) {
-    if (atRestSinceMs === null) {
-      atRestSinceMs = Date.now();
-    } else if (Date.now() - atRestSinceMs >= BALL_RESPAWN_DELAY_SEC * 1000) {
+ } else if (isAtRest) {
+  if (atRestSinceMs === null) {
+    atRestSinceMs = Date.now();
+  } else {
+    const restSeconds = (Date.now() - atRestSinceMs) / 1000;
+    const untouchedSeconds = (Date.now() - lastBallInteractionMs) / 1000;
+
+    if (
+      restSeconds >= BALL_RESPAWN_DELAY_SEC &&
+      untouchedSeconds >= BALL_RESPAWN_DELAY_SEC
+    ) {
       respawnBall();
     }
-  } else {
-    atRestSinceMs = null;
   }
+} else {
+  atRestSinceMs = null;
+}
 
   broadcast({ type: "ball", x: pos.x, y: pos.y, z: pos.z });
 
