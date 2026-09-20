@@ -197,6 +197,14 @@ case "ball": {
           <meshStandardMaterial color="red" />
         </mesh>
 
+<mesh position={[11, 2.5, 20]}>
+  <boxGeometry args={[10, 5, 10]} />
+  <meshStandardMaterial color="red" />
+</mesh>
+
+
+
+
 {ballPosition && (
   <mesh position={[ballPosition.x, ballPosition.y, ballPosition.z]} castShadow>
     <sphereGeometry args={[0.5, 32, 32]} />
@@ -219,6 +227,11 @@ case "ball": {
       />
       <meshStandardMaterial color="#888" />
     </mesh>
+
+
+
+
+
 
     <mesh
       position={[
