@@ -3,6 +3,7 @@ import { WebSocketServer } from "ws";
 import RAPIER from "@dimforge/rapier3d-compat";
 await RAPIER.init();
 const BALL_TICK_HZ = 30;
+
 // ============================================================================
 // SERVER-AUTHORITATIVE WORLD DEFINITION — identical logic to party/server.ts,
 // just running as a plain Node process instead of on Cloudflare's runtime.
@@ -11,14 +12,30 @@ const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
 world.timestep = 1 / BALL_TICK_HZ;
 const floorBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -1, 0));
 world.createCollider(RAPIER.ColliderDesc.cuboid(100, 1, 100), floorBody);
+
+// Spawn the ball above the new ramp (xStart..xEnd = 30..40) so it actually
+// rolls down it instead of just dropping onto flat ground.
+
+
+// Spawn just above the TOP of the ramp (x near 40, height 5) with a short
+// drop, so first contact is gentle and it rolls the full length down
+// instead of bouncing off a mid-slope impact.
+const BALL_SPAWN = { x: 15, y: 6.5, z: 20 };
 const ballBody = world.createRigidBody(
-  RAPIER.RigidBodyDesc.dynamic().setTranslation(0, 8, 0).setCcdEnabled(true)
+  RAPIER.RigidBodyDesc.dynamic()
+    .setTranslation(BALL_SPAWN.x, BALL_SPAWN.y, BALL_SPAWN.z)
+    .setCcdEnabled(true)
+    // Without damping, a rolling sphere never loses energy from friction
+    // alone — it would roll at ~constant speed forever instead of settling.
+    // These bleed off speed/spin so it actually comes to rest near the
+    // base of the ramp, goes to sleep, and triggers the respawn.
+    .setLinearDamping(1.5)
+    .setAngularDamping(2)
 );
-world.createCollider(RAPIER.ColliderDesc.ball(0.5).setRestitution(0.6), ballBody);
-
-
-
-
+world.createCollider(
+  RAPIER.ColliderDesc.ball(0.5).setRestitution(0.1).setFriction(0.8),
+  ballBody
+);
 
 const ARENA_BOUNDS = { minX: -100, maxX: 100, minZ: -100, maxZ: 100 };
 
@@ -38,6 +55,38 @@ const STRUCTURES = [
   },
   // add as many of these as you want — each is fully independent
 ];
+
+
+
+// A standalone wedge-shaped ramp, positioned away from everything else so it's easy to spot.
+// A standalone wedge-shaped ramp, positioned well clear of both STRUCTURES
+// entries (which occupy x: 6–18 and x: -20–-6) so nothing overlaps.
+// A standalone wedge-shaped ramp, positioned at (6, 0, 15) — clear of both
+// STRUCTURES entries since it sits at a different z than STRUCTURES[0]
+// and a different x than STRUCTURES[1].
+const NEW_RAMP = { xStart: 6, xEnd: 16, zMin: 15, zMax: 25, height: 5 };
+const rampLength = NEW_RAMP.xEnd - NEW_RAMP.xStart;
+const rampWidth = NEW_RAMP.zMax - NEW_RAMP.zMin;
+
+// Six vertices: a flat rectangular base at y=0, rising to a single top edge at y=height.
+const rampVertices = new Float32Array([
+  0, 0, 0,
+  0, 0, rampWidth,
+  rampLength, 0, 0,
+  rampLength, 0, rampWidth,
+  rampLength, NEW_RAMP.height, 0,
+  rampLength, NEW_RAMP.height, rampWidth,
+]);
+
+const newRampBody = world.createRigidBody(
+  RAPIER.RigidBodyDesc.fixed().setTranslation(NEW_RAMP.xStart, 0, NEW_RAMP.zMin)
+);
+world.createCollider(RAPIER.ColliderDesc.convexHull(rampVertices), newRampBody);
+
+
+
+
+
 
 function isOnPlatform(x, z) {
   return STRUCTURES.some(
@@ -162,28 +211,63 @@ function handleAction(id, msg) {
 // ============================================================================
 
 const BALL_RADIUS = 0.5;
-const BALL_SPAWN = { x: 0, y: 8, z: 0 };
 
 const BALL_GRAVITY = -9.81;
 const BALL_BOUNCE = 0.6; // 0 = no bounce, 1 = bounces forever
 const BALL_RESPAWN_DELAY_SEC = 2.5; // add next to the other BALL_ constants
 
 
+
+// Tracks how long the ball has been at rest; only reset once it's been
+// asleep for BALL_RESPAWN_DELAY_SEC, instead of the instant it settles.
+// Rapier's isSleeping() can stay false indefinitely if the ball keeps
+// jittering slightly on the ramp's collider, so track "at rest" ourselves
+// using actual velocity instead — much more reliable for triggering respawn.
+const AT_REST_SPEED = 0.3; // units/sec, both linear and angular
+let atRestSinceMs = null;
+
+function respawnBall() {
+  ballBody.setTranslation(BALL_SPAWN, true);
+  ballBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
+  ballBody.setAngvel({ x: 0, y: 0, z: 0 }, true);
+  ballBody.wakeUp();
+  atRestSinceMs = null;
+}
+
 function tickBall() {
   world.step();
 
-  if (ballBody.isSleeping()) {
-    ballBody.setTranslation({ x: 0, y: 8, z: 0 }, true);
-    ballBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
-    ballBody.wakeUp();
+  const pos = ballBody.translation();
+  const linvel = ballBody.linvel();
+  const angvel = ballBody.angvel();
+  const speed = Math.hypot(linvel.x, linvel.y, linvel.z);
+  const spin = Math.hypot(angvel.x, angvel.y, angvel.z);
+  const isAtRest = speed < AT_REST_SPEED && spin < AT_REST_SPEED;
+
+  // Hard safety net: if it ever strays far from the ramp (regardless of
+  // speed), reset immediately instead of letting it roll off indefinitely.
+    const strayedTooFar =
+    pos.x < NEW_RAMP.xStart - 5 ||
+    pos.x > NEW_RAMP.xEnd + 5 ||
+    pos.z < NEW_RAMP.zMin - 5 ||
+    pos.z > NEW_RAMP.zMax + 5;
+
+  if (strayedTooFar) {
+    respawnBall();
+  } else if (isAtRest) {
+    if (atRestSinceMs === null) {
+      atRestSinceMs = Date.now();
+    } else if (Date.now() - atRestSinceMs >= BALL_RESPAWN_DELAY_SEC * 1000) {
+      respawnBall();
+    }
+  } else {
+    atRestSinceMs = null;
   }
 
-  const pos = ballBody.translation();
   broadcast({ type: "ball", x: pos.x, y: pos.y, z: pos.z });
-}
-setInterval(tickBall, 1000 / BALL_TICK_HZ);
 
-// =============================== END SECTION ================================
+}
+setInterval(tickBall, 1000 / BALL_TICK_HZ);// =============================== END SECTION ================================
 
 // Plain HTTP server: also answers Cloud Run's health-check GET requests.
 const server = http.createServer((req, res) => {
