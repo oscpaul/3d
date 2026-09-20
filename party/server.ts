@@ -135,9 +135,9 @@ const BALL_SPAWN = { x: 0, y: 8, z: 0 };
 const BALL_TICK_HZ = 30;
 const BALL_GRAVITY = -9.81;
 const BALL_BOUNCE = 0.6; // 0 = no bounce, 1 = bounces forever
+const BALL_RESPAWN_DELAY_SEC = 2.5; // how long it sits still before resetting
 
-type BallState = { x: number; y: number; z: number; vy: number };
-
+type BallState = { x: number; y: number; z: number; vy: number; restTicks: number };
 // =============================== END SECTION ================================
 
 export default class GameServer implements Party.Server {
@@ -149,6 +149,8 @@ export default class GameServer implements Party.Server {
     y: BALL_SPAWN.y,
     z: BALL_SPAWN.z,
     vy: 0,
+  restTicks: 0,
+
   };
   private ballTimer?: ReturnType<typeof setInterval>;
   // ---- end ----
@@ -315,6 +317,26 @@ export default class GameServer implements Party.Server {
       b.vy = -b.vy * BALL_BOUNCE;
       if (Math.abs(b.vy) < 0.5) b.vy = 0; // stop tiny endless bounces
     }
+
+
+// Once it's settled on the floor, count down, then send it back up so
+// there's always something to look at instead of a ball frozen forever.
+if (b.y === floor && b.vy === 0) {
+  b.restTicks += 1;
+  if (b.restTicks >= BALL_RESPAWN_DELAY_SEC * BALL_TICK_HZ) {
+    b.x = BALL_SPAWN.x;
+    b.y = BALL_SPAWN.y;
+    b.z = BALL_SPAWN.z;
+    b.vy = 0;
+    b.restTicks = 0;
+  }
+} else {
+  b.restTicks = 0;
+}
+
+
+
+
 
     this.room.broadcast(
       JSON.stringify({

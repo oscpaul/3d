@@ -152,8 +152,9 @@ const BALL_SPAWN = { x: 0, y: 8, z: 0 };
 const BALL_TICK_HZ = 30;
 const BALL_GRAVITY = -9.81;
 const BALL_BOUNCE = 0.6; // 0 = no bounce, 1 = bounces forever
+const BALL_RESPAWN_DELAY_SEC = 2.5; // add next to the other BALL_ constants
 
-const ball = { x: BALL_SPAWN.x, y: BALL_SPAWN.y, z: BALL_SPAWN.z, vy: 0 };
+const ball = { x: BALL_SPAWN.x, y: BALL_SPAWN.y, z: BALL_SPAWN.z, vy: 0, restTicks: 0 };
 
 function tickBall() {
   const dt = 1 / BALL_TICK_HZ;
@@ -167,7 +168,18 @@ function tickBall() {
     ball.vy = -ball.vy * BALL_BOUNCE;
     if (Math.abs(ball.vy) < 0.5) ball.vy = 0; // stop tiny endless bounces
   }
-
+if (ball.y === floor && ball.vy === 0) {
+  ball.restTicks += 1;
+  if (ball.restTicks >= BALL_RESPAWN_DELAY_SEC * BALL_TICK_HZ) {
+    ball.x = BALL_SPAWN.x;
+    ball.y = BALL_SPAWN.y;
+    ball.z = BALL_SPAWN.z;
+    ball.vy = 0;
+    ball.restTicks = 0;
+  }
+} else {
+  ball.restTicks = 0;
+}
   broadcast({ type: "ball", x: ball.x, y: ball.y, z: ball.z });
 }
 

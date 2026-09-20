@@ -6,6 +6,9 @@ import * as THREE from "three";
 import usePartySocket from "partysocket/react";
 import Robot, { type RobotHandle } from "@/components/Robot";
 
+
+
+
 const ARENA_SIZE = 200;
 const OBSTACLE = { x: 0, z: 0, size: 3 };
 const STRUCTURES = [
@@ -191,9 +194,9 @@ case "ball": {
         </mesh>
 
 {ballPosition && (
-  <mesh position={[ballPosition.x, ballPosition.y, ballPosition.z]}>
+  <mesh position={[ballPosition.x, ballPosition.y, ballPosition.z]} castShadow>
     <sphereGeometry args={[0.5, 32, 32]} />
-    <meshStandardMaterial color="#ff6633" />
+    <meshStandardMaterial color="#ff6633" emissive="#ff6633" emissiveIntensity={0.4} />
   </mesh>
 )}
 
