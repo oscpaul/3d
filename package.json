@@ -6,8 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint",
-  "server": "node --watch index.mjs"
+    "lint": "eslint"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.20.0",
