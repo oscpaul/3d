@@ -250,30 +250,33 @@ case "ball": {
   <bufferGeometry>
     <bufferAttribute
       attach="attributes-position"
-      args={[new Float32Array([
-        0, 0, 0,
-        0, 0, NEW_RAMP.zMax - NEW_RAMP.zMin,
-        NEW_RAMP.xEnd - NEW_RAMP.xStart, 0, 0,
-        NEW_RAMP.xEnd - NEW_RAMP.xStart, 0, NEW_RAMP.zMax - NEW_RAMP.zMin,
-        NEW_RAMP.xEnd - NEW_RAMP.xStart, NEW_RAMP.height, 0,
-        NEW_RAMP.xEnd - NEW_RAMP.xStart, NEW_RAMP.height, NEW_RAMP.zMax - NEW_RAMP.zMin,
-]), 3]}
+      args={[
+        new Float32Array([
+          0, 0, 0,
+          0, 0, NEW_RAMP.zMax - NEW_RAMP.zMin,
+          NEW_RAMP.xEnd - NEW_RAMP.xStart, 0, 0,
+          NEW_RAMP.xEnd - NEW_RAMP.xStart, 0, NEW_RAMP.zMax - NEW_RAMP.zMin,
+          NEW_RAMP.xEnd - NEW_RAMP.xStart, NEW_RAMP.height, 0,
+          NEW_RAMP.xEnd - NEW_RAMP.xStart, NEW_RAMP.height, NEW_RAMP.zMax - NEW_RAMP.zMin,
+        ]),
+        3,
+      ]}
     />
-   <bufferAttribute
-  attach="attributes-position"
-  args={[
-    new Float32Array([
-      0, 0, 0,
-      0, 0, NEW_RAMP.zMax - NEW_RAMP.zMin,
-      NEW_RAMP.xEnd - NEW_RAMP.xStart, 0, 0,
-      NEW_RAMP.xEnd - NEW_RAMP.xStart, 0, NEW_RAMP.zMax - NEW_RAMP.zMin,
-      NEW_RAMP.xEnd - NEW_RAMP.xStart, NEW_RAMP.height, 0,
-      NEW_RAMP.xEnd - NEW_RAMP.xStart, NEW_RAMP.height, NEW_RAMP.zMax - NEW_RAMP.zMin,
-    ]),
-    3,
-  ]}
-/>
+
+    <bufferAttribute
+      attach="index"
+      args={[
+        new Uint16Array([
+          0, 1, 2, 1, 3, 2,
+          0, 2, 4, 2, 5, 4,
+          0, 4, 1, 4, 5, 1,
+          2, 3, 4, 3, 5, 4,
+        ]),
+        1,
+      ]}
+    />
   </bufferGeometry>
+
   <meshStandardMaterial color="#999" side={THREE.DoubleSide} />
 </mesh>
 
