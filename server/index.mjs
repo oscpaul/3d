@@ -1,10 +1,24 @@
 import http from "http";
 import { WebSocketServer } from "ws";
-
+import RAPIER from "@dimforge/rapier3d-compat";
+await RAPIER.init();
+const BALL_TICK_HZ = 30;
 // ============================================================================
 // SERVER-AUTHORITATIVE WORLD DEFINITION — identical logic to party/server.ts,
 // just running as a plain Node process instead of on Cloudflare's runtime.
 // ============================================================================
+const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+world.timestep = 1 / BALL_TICK_HZ;
+const floorBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -1, 0));
+world.createCollider(RAPIER.ColliderDesc.cuboid(100, 1, 100), floorBody);
+const ballBody = world.createRigidBody(
+  RAPIER.RigidBodyDesc.dynamic().setTranslation(0, 8, 0).setCcdEnabled(true)
+);
+world.createCollider(RAPIER.ColliderDesc.ball(0.5).setRestitution(0.6), ballBody);
+
+
+
+
 
 const ARENA_BOUNDS = { minX: -100, maxX: 100, minZ: -100, maxZ: 100 };
 
@@ -149,40 +163,24 @@ function handleAction(id, msg) {
 
 const BALL_RADIUS = 0.5;
 const BALL_SPAWN = { x: 0, y: 8, z: 0 };
-const BALL_TICK_HZ = 30;
+
 const BALL_GRAVITY = -9.81;
 const BALL_BOUNCE = 0.6; // 0 = no bounce, 1 = bounces forever
 const BALL_RESPAWN_DELAY_SEC = 2.5; // add next to the other BALL_ constants
 
-const ball = { x: BALL_SPAWN.x, y: BALL_SPAWN.y, z: BALL_SPAWN.z, vy: 0, restTicks: 0 };
 
 function tickBall() {
-  const dt = 1 / BALL_TICK_HZ;
+  world.step();
 
-  ball.vy += BALL_GRAVITY * dt;
-  ball.y += ball.vy * dt;
-
-  const floor = BALL_RADIUS; // ball rests with its center one radius above y = 0
-  if (ball.y <= floor) {
-    ball.y = floor;
-    ball.vy = -ball.vy * BALL_BOUNCE;
-    if (Math.abs(ball.vy) < 0.5) ball.vy = 0; // stop tiny endless bounces
+  if (ballBody.isSleeping()) {
+    ballBody.setTranslation({ x: 0, y: 8, z: 0 }, true);
+    ballBody.setLinvel({ x: 0, y: 0, z: 0 }, true);
+    ballBody.wakeUp();
   }
-if (ball.y === floor && ball.vy === 0) {
-  ball.restTicks += 1;
-  if (ball.restTicks >= BALL_RESPAWN_DELAY_SEC * BALL_TICK_HZ) {
-    ball.x = BALL_SPAWN.x;
-    ball.y = BALL_SPAWN.y;
-    ball.z = BALL_SPAWN.z;
-    ball.vy = 0;
-    ball.restTicks = 0;
-  }
-} else {
-  ball.restTicks = 0;
-}
-  broadcast({ type: "ball", x: ball.x, y: ball.y, z: ball.z });
-}
 
+  const pos = ballBody.translation();
+  broadcast({ type: "ball", x: pos.x, y: pos.y, z: pos.z });
+}
 setInterval(tickBall, 1000 / BALL_TICK_HZ);
 
 // =============================== END SECTION ================================
@@ -211,8 +209,7 @@ wss.on("connection", (ws) => {
   broadcast({ type: "update", id, x: 0, y: 0, z: 5, dx: 0, dz: 0, running: false }, id);
 
   // ---- HELLO WORLD BALL PHYSICS: tell the new client where the ball is ----
-  ws.send(JSON.stringify({ type: "ball", x: ball.x, y: ball.y, z: ball.z }));
-  // ---- end ----
+ws.send(JSON.stringify({ type: "ball", x: ballBody.translation().x, y: ballBody.translation().y, z: ballBody.translation().z }));  // ---- end ----
 
   ws.on("message", (raw) => {
     let msg;
