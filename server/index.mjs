@@ -450,4 +450,8 @@ ws.on("close", () => {
 });
 }); 
 const port = process.env.PORT || 8080;
+
+console.log("ABOUT TO START SERVER");
+console.log("PORT =", process.env.PORT || 8080);
+
 server.listen(port, () => console.log(`Game server listening on ${port}`));
