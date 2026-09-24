@@ -139,21 +139,6 @@ const playerBodies = new Map();
 const playerColliders = new Map();
 const playerControllers = new Map();
 
-// Real falling: kinematic bodies are never touched by world gravity, so we
-// track each player's own vertical speed and feed it into the character
-// controller ourselves every tick — same idea as any platformer's gravity
-// integration, just routed through Rapier's collision response instead of
-// a hand-rolled ground check.
-const playerVelocityY = new Map(); // id -> current vertical speed (units/sec)
-const pendingMoves = new Map(); // id -> { dx, dz, running }, consumed once per tick
-const GRAVITY = -9.81;
-const MAX_FALL_SPEED = -40; // terminal velocity clamp
-// A small constant downward speed (rather than exactly 0) while grounded
-// keeps the character controller pressed against the surface — including
-// a sloped one — so computedGrounded() doesn't flicker false for a tick
-// and let the player briefly "pop" off a ramp.
-const GROUNDED_STICK_SPEED = -1;
-
 function createPlayerPhysics(id, x, y, z) {
   const body = world.createRigidBody(
     RAPIER.RigidBodyDesc.kinematicPositionBased()
@@ -235,75 +220,107 @@ function broadcast(msg, excludeId) {
 
 
 
-// Applies one physics tick to every player: whatever horizontal move is
-// pending (from a keypress) plus this tick's worth of gravity, combined
-// into a single computeColliderMovement call. Combining them matters —
-// issuing two separate kinematic writes in the same tick (one for X/Z,
-// one for Y) would just have the second overwrite the first instead of
-// blending, since setNextKinematicTranslation only remembers its last call.
-function tickPlayers(dt) {
-  for (const [id, body] of playerBodies) {
-    const collider = playerColliders.get(id);
-    const controller = playerControllers.get(id);
-    if (!collider || !controller) continue;
+function movePlayerPhysics(id, dx, dz) {
+  const body = playerBodies.get(id);
+  const collider = playerColliders.get(id);
+  const controller = playerControllers.get(id);
 
-    const pending = pendingMoves.get(id);
-    const dx = pending?.dx ?? 0;
-    const dz = pending?.dz ?? 0;
-    const running = pending?.running ?? false;
-    pendingMoves.delete(id); // one-shot: a keypress moves exactly MOVE_STEP once
+  if (!body || !collider || !controller) return null;
 
-    let vy = playerVelocityY.get(id) ?? 0;
-    vy = Math.max(vy + GRAVITY * dt, MAX_FALL_SPEED);
+  const current = body.translation();
 
-    const desiredMovement = { x: dx * MOVE_STEP, y: vy * dt, z: dz * MOVE_STEP };
-    controller.computeColliderMovement(collider, desiredMovement);
-    const movement = controller.computedMovement();
-    const grounded = controller.computedGrounded();
+  const desiredMovement = {
+    x: dx * MOVE_STEP,
+    y: 0,
+    z: dz * MOVE_STEP,
+  };
 
-    const current = body.translation();
-    const next = {
-      x: current.x + movement.x,
-      y: current.y + movement.y,
-      z: current.z + movement.z,
-    };
-    body.setNextKinematicTranslation(next);
+  controller.computeColliderMovement(
+    collider,
+    desiredMovement
+  );
 
-    vy = grounded ? GROUNDED_STICK_SPEED : vy;
-    playerVelocityY.set(id, vy);
+  const movement = controller.computedMovement();
 
-    players.set(id, { x: next.x, y: next.y - PLAYER_HEIGHT / 2, z: next.z });
+  const nextX = current.x + movement.x;
+  const nextY = current.y + movement.y;
+  const nextZ = current.z + movement.z;
 
-    // Only broadcast when something actually happened this tick — an
-    // explicit move, or enough vertical motion to matter (i.e. falling).
-    // A grounded, idle player produces ~0 movement.y and no pending move,
-    // so this stays quiet for them exactly like the old per-message
-    // broadcast did.
-    if (dx !== 0 || dz !== 0 || Math.abs(movement.y) > 0.001) {
-      broadcast({
-        type: "update",
-        id,
-        x: next.x,
-        y: next.y - PLAYER_HEIGHT / 2,
-        z: next.z,
-        dx,
-        dz,
-        running,
-      });
-    }
-  }
+  body.setNextKinematicTranslation({
+    x: nextX,
+    y: nextY,
+    z: nextZ,
+  });
+
+  return {
+    x: nextX,
+    y: nextY - PLAYER_HEIGHT / 2,
+    z: nextZ,
+  };
 }
 
-function handleMove(id, msg) {
-  if (!players.has(id)) return;
 
-  // Recorded, not applied immediately — tickPlayers() applies it together
-  // with gravity on the next tick, so a horizontal step and a fall are
-  // never two competing kinematic writes.
-  pendingMoves.set(id, {
-    dx: clampDelta(msg.dx),
-    dz: clampDelta(msg.dz),
-    running: Boolean(msg.running),
+
+
+
+function handleMove(id, msg) {
+  const current = players.get(id);
+  if (!current) return;
+
+  const dx = clampDelta(msg.dx);
+  const dz = clampDelta(msg.dz);
+  const running = Boolean(msg.running);
+
+  const position = movePlayerPhysics(id, dx, dz);
+const ballPos = ballBody.translation();
+const playerPos = {
+  x: position.x,
+  y: position.y + PLAYER_HEIGHT / 2,
+  z: position.z,
+};
+
+if (playerPos) {
+  const distance = Math.hypot(
+    playerPos.x - ballPos.x,
+    playerPos.z - ballPos.z
+  );
+
+/*
+if ((dx !== 0 || dz !== 0) && distance < 1.5) {
+  lastBallInteractionMs = Date.now();
+  atRestSinceMs = null;
+
+  const kickStrength = 5;
+
+  ballBody.applyImpulse(
+    {
+      x: dx * kickStrength,
+    y: 0.5,
+      z: dz * kickStrength,
+    },
+    true
+  );
+}
+
+*/
+}
+
+
+
+
+  if (!position) return;
+
+  players.set(id, position);
+
+  broadcast({
+    type: "update",
+    id,
+    x: position.x,
+    y: position.y,
+    z: position.z,
+    dx,
+    dz,
+    running,
   });
 }
 
@@ -347,8 +364,16 @@ lastBallInteractionMs = Date.now();
 }
 
 function tickBall() {
-  const dt = 1 / BALL_TICK_HZ;
-  tickPlayers(dt);
+  for (const [id, body] of playerBodies) {
+    const player = players.get(id);
+    if (!player) continue;
+
+    body.setNextKinematicTranslation({
+      x: player.x,
+      y: player.y + PLAYER_HEIGHT / 2,
+      z: player.z,
+    });
+  }
 
   world.step();  const pos = ballBody.translation();
   const linvel = ballBody.linvel();
@@ -403,7 +428,6 @@ wss.on("connection", (ws) => {
   sockets.set(id, ws);
 players.set(id, { x: 0, y: 0, z: 5 });
 createPlayerPhysics(id, 0, 0, 5);
-playerVelocityY.set(id, 0);
 
 
   ws.send(
@@ -440,8 +464,6 @@ ws.on("close", () => {
   playerBodies.delete(id);
   playerColliders.delete(id);
   playerControllers.delete(id);
-  playerVelocityY.delete(id);
-  pendingMoves.delete(id);
 
   players.delete(id);
   sockets.delete(id);
