@@ -58,17 +58,6 @@ const PLAYER_HEIGHT = 2;
 const PLAYER_RADIUS = 0.5;
 const MOVE_STEP = 1;
 
-const STRUCTURES = [
-  {
-    ramp: { xStart: 6, xEnd: 12, zMin: -3, zMax: 3, height: 4 },
-    platform: { xMin: 12, xMax: 18, zMin: -3, zMax: 3, height: 4 },
-  },
-  {
-    ramp: { xStart: -20, xEnd: -14, zMin: 10, zMax: 16, height: 6 },
-    platform: { xMin: -14, xMax: -6, zMin: 10, zMax: 16, height: 6 },
-  },
-  // add as many of these as you want — each is fully independent
-];
 
 
 
