@@ -1,12 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties, useMemo, Suspense} from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import usePartySocket from "partysocket/react";
 import Robot, { type RobotHandle } from "@/components/Robot";
 import Flag3D from "@/components/Flag3D";
-import { useTexture } from '@react-three/drei'
+
 import RiveRobot from "@/components/RiveRobot";
 
 
@@ -94,17 +94,6 @@ const walkTargetRef = useRef<{ x: number; z: number } | null>(null);
 const walkTimerRef = useRef<number | null>(null);
 const selfPositionRef = useRef<PlayerState | null>(null);
 const [blip, setBlip] = useState<{ x: number; z: number; key: number } | null>(null);
-
-
-const rampWidth = NEW_RAMP.xEnd - NEW_RAMP.xStart
-const rampDepth = NEW_RAMP.zMax - NEW_RAMP.zMin
-const zoneCenter = [
-  (NEW_RAMP.xStart + NEW_RAMP.xEnd) / 2,
-  0.02,
-  (NEW_RAMP.zMin + NEW_RAMP.zMax) / 2,
-]
-const zoneSize = Math.hypot(rampWidth, rampDepth) / 0.68
-
 
   const socket = usePartySocket({
     host: process.env.NEXT_PUBLIC_PARTYKIT_HOST!, // e.g. "localhost:1999"
@@ -348,14 +337,12 @@ const ballZone = ballPosition ? getZone(ballPosition.x, ballPosition.z) : null;
 ) : (
   <OverviewCamera />
 )}
-<Suspense fallback={null}>
-<RampZone position={zoneCenter} size={zoneSize} playerRef={selfPositionRef} />
-</Suspense>
+
+
 
 {blip && <ClickBlip key={blip.key} x={blip.x} z={blip.z} />}
-<Suspense fallback={null}>
+
  <Flag3D />
-</Suspense>
 
 
         <ambientLight intensity={0.7} />
@@ -515,119 +502,6 @@ position={[p.x, p.y, p.z]}
 
 
 
-
-function RampZone({ position = [0, 0, 0], size = 10, playerRef }) {
-  const texture = useTexture('/floor/alpha.jpg')
-  const OUTER_RADIUS = 0.46
-  const INNER_RADIUS = 0.34
-  const LINE_WIDTH = 0.08
-  const BLIP_SPEED = 8
-
-  const outerR = size * OUTER_RADIUS
-  const innerR = size * INNER_RADIUS
-
-  const bandMat = useRef<THREE.MeshBasicMaterial>(null)
-  const innerAreaMat = useRef<THREE.MeshBasicMaterial>(null)
-  const outerRingMat = useRef<THREE.MeshBasicMaterial>(null)
-  const innerRingMat = useRef<THREE.MeshBasicMaterial>(null)
-
-  // Three pieces of the same picture, cut along the ring radii.
-  const { tex, innerGeo, bandGeo, outsideGeo } = useMemo(() => {
-    const tex = texture.clone()
-    tex.repeat.set(1 / size, 1 / size)   // ShapeGeometry UVs are raw x,y,
-    tex.offset.set(0.5, 0.5)             // so this maps -size/2..size/2 onto 0..1
-    tex.needsUpdate = true
-
-    const circle = (r: number) => {
-      const s = new THREE.Shape()
-      s.absarc(0, 0, r, 0, Math.PI * 2, false)
-      return s
-    }
-    const hole = (r: number) => {
-      const p = new THREE.Path()
-      p.absarc(0, 0, r, 0, Math.PI * 2, true)
-      return p
-    }
-
-    const inner = circle(innerR)
-
-    const band = circle(outerR)
-    band.holes.push(hole(innerR))
-
-    const h = size / 2
-    const outside = new THREE.Shape()
-    outside.moveTo(-h, -h)
-    outside.lineTo(h, -h)
-    outside.lineTo(h, h)
-    outside.lineTo(-h, h)
-    outside.lineTo(-h, -h)
-    outside.holes.push(hole(outerR))
-
-    return {
-      tex,
-      innerGeo: new THREE.ShapeGeometry(inner, 128),
-      bandGeo: new THREE.ShapeGeometry(band, 128),
-      outsideGeo: new THREE.ShapeGeometry(outside, 128),
-    }
-  }, [texture, size, outerR, innerR])
-
-  useFrame((state) => {
-    const p = playerRef.current
-    if (
-      !p ||
-      !bandMat.current ||
-      !innerAreaMat.current ||
-      !outerRingMat.current ||
-      !innerRingMat.current
-    ) return
-
-    const dist = Math.hypot(p.x - position[0], p.z - position[2])
-    const blip = 0.5 + 0.5 * Math.sin(state.clock.elapsedTime * BLIP_SPEED)
-
-    const inOuter = dist < outerR
-    const inInner = dist < innerR
-
-    // Outer band blips only while you're between the rings.
-    const bandBlips = inOuter && !inInner
-    bandMat.current.opacity = bandBlips ? blip : 1
-    outerRingMat.current.opacity = bandBlips ? blip : 1
-
-    // Inner disc blips only once you're inside the inner radius.
-    innerAreaMat.current.opacity = inInner ? blip : 1
-    innerRingMat.current.opacity = inInner ? blip : 1
-  })
-
-  return (
-    <group position={position} rotation-x={-Math.PI / 2}>
-      {/* everything outside the outer radius: never blips */}
-      <mesh geometry={outsideGeo}>
-        <meshBasicMaterial map={tex} />
-      </mesh>
-
-      {/* outer band (between the rings) */}
-      <mesh geometry={bandGeo}>
-        <meshBasicMaterial ref={bandMat} map={tex} transparent />
-      </mesh>
-
-      {/* inner disc */}
-      <mesh geometry={innerGeo}>
-        <meshBasicMaterial ref={innerAreaMat} map={tex} transparent />
-      </mesh>
-
-      {/* outer ring outline */}
-      <mesh position-z={0.01}>
-        <ringGeometry args={[outerR - LINE_WIDTH, outerR, 128]} />
-        <meshBasicMaterial ref={outerRingMat} color="#ff0000" transparent />
-      </mesh>
-
-      {/* inner ring outline */}
-      <mesh position-z={0.01}>
-        <ringGeometry args={[innerR - LINE_WIDTH, innerR, 128]} />
-        <meshBasicMaterial ref={innerRingMat} color="#ff0000" transparent />
-      </mesh>
-    </group>
-  )
-}
 function ClickBlip({ x, z }: { x: number; z: number }) {
   const ref = useRef<THREE.Mesh>(null);
   const start = useRef(performance.now());
