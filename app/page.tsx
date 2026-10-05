@@ -98,7 +98,7 @@ const [blip, setBlip] = useState<{ x: number; z: number; key: number } | null>(n
 
 const rampWidth = NEW_RAMP.xEnd - NEW_RAMP.xStart
 const rampDepth = NEW_RAMP.zMax - NEW_RAMP.zMin
-const zoneCenter = [
+const zoneCenter: [number, number, number] = [
   (NEW_RAMP.xStart + NEW_RAMP.xEnd) / 2,
   0.02,
   (NEW_RAMP.zMin + NEW_RAMP.zMax) / 2,
