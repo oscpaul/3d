@@ -516,7 +516,15 @@ position={[p.x, p.y, p.z]}
 
 
 
-function RampZone({ position = [0, 0, 0], size = 10, playerRef }) {
+function RampZone({
+  position = [0, 0, 0],
+  size = 10,
+  playerRef,
+}: {
+  position?: [number, number, number]
+  size?: number
+  playerRef: React.RefObject<PlayerState | null>
+}) {
   const texture = useTexture('/floor/alpha.jpg')
   const OUTER_RADIUS = 0.46
   const INNER_RADIUS = 0.34
