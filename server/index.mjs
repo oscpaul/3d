@@ -1,6 +1,17 @@
 import http from "http";
 import { WebSocketServer } from "ws";
 import RAPIER from "@dimforge/rapier3d-compat";
+
+
+
+
+import { buildingBoxes, buildingRamps } from "./building.js"; // put with your other imports
+
+
+
+
+
+
 await RAPIER.init();
 const BALL_TICK_HZ = 30;
 const OBSTACLE = { minX: -1.5, maxX: 1.5, minZ: -1.5, maxZ: 1.5 };
@@ -24,6 +35,24 @@ world.createCollider(
   RAPIER.ColliderDesc.cuboid(OBSTACLE.maxX, 1, OBSTACLE.maxZ),
   obstacleBody
 );
+
+
+
+
+
+const buildingBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+
+for (const b of buildingBoxes) {
+  world.createCollider(
+    RAPIER.ColliderDesc.cuboid(b.hx, b.hy, b.hz).setTranslation(b.cx, b.cy, b.cz),
+    buildingBody
+  );
+}
+
+for (const r of buildingRamps) {
+  const desc = RAPIER.ColliderDesc.convexHull(new Float32Array(r.points.flat()));
+  if (desc) world.createCollider(desc, buildingBody);
+}
 
 
 // Spawn the ball above the new ramp (xStart..xEnd = 30..40) so it actually
@@ -149,13 +178,13 @@ function createPlayerPhysics(id, x, y, z) {
       .setTranslation(x, y + PLAYER_HEIGHT / 2, z)
   );
 
-  const collider = world.createCollider(
-    RAPIER.ColliderDesc.capsule(
-      PLAYER_HEIGHT / 2 - PLAYER_RADIUS,
-      PLAYER_RADIUS
-    ),
-    body
-  );
+const collider = world.createCollider(
+  RAPIER.ColliderDesc.capsule(
+    PLAYER_HEIGHT / 2 - PLAYER_RADIUS,
+    PLAYER_RADIUS
+  ).setCollisionGroups(0x00020001), // I am group 2, I interact with group 1
+  body
+);
 
   const controller = world.createCharacterController(0.01);
   controller.setApplyImpulsesToDynamicBodies(true);
@@ -246,7 +275,12 @@ function tickPlayers(dt) {
     vy = Math.max(vy + GRAVITY * dt, MAX_FALL_SPEED);
 
     const desiredMovement = { x: dx * MOVE_STEP, y: vy * dt, z: dz * MOVE_STEP };
-    controller.computeColliderMovement(collider, desiredMovement);
+   controller.computeColliderMovement(
+  collider,
+  desiredMovement,
+  undefined,   // filterFlags (not needed)
+  0x00020001   // query groups: member of group 2, only hits group 1
+);
     const movement = controller.computedMovement();
     const grounded = controller.computedGrounded();
 

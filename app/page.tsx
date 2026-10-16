@@ -1,4 +1,7 @@
 "use client";
+import { ConvexGeometry } from "three/examples/jsm/geometries/ConvexGeometry.js";
+import { B, buildingBoxes, buildingRamps } from "@/lib/building";
+import { planPath, type Pt } from "@/lib/pathing";
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties, useMemo, Suspense} from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
@@ -74,569 +77,12 @@ const STATE_BUTTONS = ["Dance", "Sitting", "Standing", "Death"];
 const EMOTE_BUTTONS = ["Wave", "Jump", "Yes", "No", "Punch", "ThumbsUp"];
 
 
+type CameraMode = "follow" | "first" | "overview";
+const nextCameraMode = (m: CameraMode): CameraMode =>
+  m === "follow" ? "first" : m === "first" ? "overview" : "follow";
 
-export default function GamePage() {
 
-  const [players, setPlayers] = useState<Players>({});
-  const [facings, setFacings] = useState<Facings>({});
-  const [runMode, setRunMode] = useState(false);
-  const selfIdRef = useRef<string | null>(null);
-  const robotHandles = useRef<Record<string, RobotHandle>>({});
-const [ballPosition, setBallPosition] = useState<PlayerState | null>(null);
-const [heading, setHeading] = useState(0);
-const [cameraMode, setCameraMode] = useState<"follow" | "overview">("follow");
-
-const [showRiveRobot, setShowRiveRobot] = useState(false);
-const riveTimerRef = useRef<number | null>(null);
-
-
-const walkTargetRef = useRef<{ x: number; z: number } | null>(null);
-const walkTimerRef = useRef<number | null>(null);
-const selfPositionRef = useRef<PlayerState | null>(null);
-const [blip, setBlip] = useState<{ x: number; z: number; key: number } | null>(null);
-
-
-const rampWidth = NEW_RAMP.xEnd - NEW_RAMP.xStart
-const rampDepth = NEW_RAMP.zMax - NEW_RAMP.zMin
-const zoneCenter: [number, number, number] = [
-  (NEW_RAMP.xStart + NEW_RAMP.xEnd) / 2,
-  0.02,
-  (NEW_RAMP.zMin + NEW_RAMP.zMax) / 2,
-]
-const zoneSize = Math.hypot(rampWidth, rampDepth) / 0.68
-
-
-  const socket = usePartySocket({
-    host: process.env.NEXT_PUBLIC_PARTYKIT_HOST!, // e.g. "localhost:1999"
-    room: "game-room",
-onMessage(event) {
-  const msg: ServerMessage = JSON.parse(event.data);
-
-  switch (msg.type) {
-case "ball": {
-  setBallPosition({ x: msg.x, y: msg.y, z: msg.z });
-  break;
-}
-        case "state": {
-          selfIdRef.current = msg.selfId;
-          setPlayers(msg.players);
-          break;
-        }
-
- case "update": {
-  setPlayers((prev) => ({ ...prev, [msg.id]: { x: msg.x, y: msg.y, z: msg.z } }));
-  if (msg.dx !== 0 || msg.dz !== 0) {
-    setFacings((prev) => ({ ...prev, [msg.id]: Math.atan2(msg.dx, msg.dz) }));
-  }
-  robotHandles.current[msg.id]?.notifyMove(msg.running);
-  break;
-}
-        case "snapback": {
- stopWalking();
-          const selfId = selfIdRef.current;
-          if (!selfId) return;
-  setPlayers((prev) => ({ ...prev, [selfId]: { x: msg.x, y: msg.y, z: msg.z } }));
-          break;
-        }
-        case "action": {
-          robotHandles.current[msg.id]?.notifyAction(msg.action);
-          break;
-        }
-        case "leave": {
-          setPlayers((prev) => {
-            const next = { ...prev };
-            delete next[msg.id];
-            return next;
-          });
-          delete robotHandles.current[msg.id];
-          break;
-        }
-      }
-    },
-  });
-
-
-
-const stopWalking = useCallback(() => {
-  walkTargetRef.current = null;
-  if (walkTimerRef.current !== null) {
-    window.clearTimeout(walkTimerRef.current);
-    walkTimerRef.current = null;
-  }
-}, []);
-
-const stepWalk = useCallback(() => {
-  const selfId = selfIdRef.current;
-  const target = walkTargetRef.current;
-  const current = selfPositionRef.current;
-  if (!selfId || !target || !current) return;
-
-  const EPS = 0.5;
-  let dx = 0;
-  let dz = 0;
-  if (Math.abs(current.x - target.x) > EPS) {
-    dx = current.x < target.x ? 1 : -1;
-  } else if (Math.abs(current.z - target.z) > EPS) {
-    dz = current.z < target.z ? 1 : -1;
-  } else {
-    stopWalking(); // reached
-    return;
-  }
-  setPlayers((prev) => {
-    const cur = prev[selfId];
-    if (!cur) return prev;
-    return { ...prev, [selfId]: { x: cur.x + dx, y: cur.y, z: cur.z + dz } };
-  });
-  const moveHeading = Math.atan2(dx, dz);
-  setFacings((prev) => ({ ...prev, [selfId]: moveHeading }));
-  setHeading(moveHeading);
-  robotHandles.current[selfId]?.notifyMove(runMode);
-  socket.send(JSON.stringify({ type: "move", dx, dz, running: runMode }));
-
-  walkTimerRef.current = window.setTimeout(stepWalk, 220);
-}, [socket, runMode, stopWalking]);
-
-
-const handleGroundClick = useCallback(
-  (e: any) => {
-    const targetX = Math.round(e.point.x);
-    const targetZ = Math.round(e.point.z);
-
-    setBlip({ x: targetX, z: targetZ, key: Date.now() });
-    window.setTimeout(() => setBlip(null), 600);
-
-    walkTargetRef.current = { x: targetX, z: targetZ };
-    if (walkTimerRef.current === null) stepWalk();
-  },
-  [stepWalk]
-);
-
-
-
- const moveAlongHeading = useCallback(
-  (sign: 1 | -1) => {
-stopWalking();
-    const selfId = selfIdRef.current;
-    if (!selfId) return;
-
-    // Down (sign === -1) turns the character 180° and walks forward in
-    // that new direction, instead of walking backward while still facing
-    // the old way. Since FollowCamera reads `heading` too, the camera
-    // swings around with him.
-    const moveHeading = sign === 1 ? heading : wrapAngle(heading + Math.PI);
-
-    const dx = Math.round(Math.sin(moveHeading));
-    const dz = Math.round(Math.cos(moveHeading));
-    if (dx === 0 && dz === 0) return;
-
-    setPlayers((prev) => {
-      const current = prev[selfId];
-      if (!current) return prev;
-      return { ...prev, [selfId]: { x: current.x + dx, y: current.y, z: current.z + dz } };
-    });
-    setFacings((prev) => ({ ...prev, [selfId]: moveHeading }));
-    if (sign === -1) setHeading(moveHeading);
-    robotHandles.current[selfId]?.notifyMove(runMode);
-
-    socket.send(JSON.stringify({ type: "move", dx, dz, running: runMode }));
-  },
-  [socket, runMode, heading, stopWalking]
-);
-
-const TWO_PI = Math.PI * 2;
-const wrapAngle = (a: number) => ((a % TWO_PI) + TWO_PI) % TWO_PI;
-
-const turn = useCallback((sign: 1 | -1) => {
-  stopWalking();
-
-  const selfId = selfIdRef.current;
-  setHeading((h) => {
-const next = wrapAngle(h + sign * TURN_STEP);
-    if (selfId) setFacings((prev) => ({ ...prev, [selfId]: next }));
-    return next;
-  });
-}, [stopWalking]);
-
-const handleBallClick = useCallback((e: any) => {
-  e.stopPropagation();
-setShowRiveRobot(true);
-
-if (riveTimerRef.current !== null) {
-window.clearTimeout(riveTimerRef.current);
-}
-
-riveTimerRef.current = window.setTimeout(() => {
-setShowRiveRobot(false);
-riveTimerRef.current = null;
-}, 1500);
-}, []);
-
-
-
-  const requestAction = useCallback(
-    (action: string) => {
-      const selfId = selfIdRef.current;
-      if (!selfId) return;
-      robotHandles.current[selfId]?.notifyAction(action); // optimistic, cosmetic only
-      socket.send(JSON.stringify({ type: "action", action }));
-    },
-    [socket]
-  );
-
-  // Desktop keyboard support.
-useEffect(() => {
-  function onKeyDown(e: KeyboardEvent) {
-    if (e.key === "ArrowUp") { e.preventDefault(); moveAlongHeading(1); }
-    else if (e.key === "ArrowDown") { e.preventDefault(); moveAlongHeading(-1); }
-    else if (e.key === "ArrowLeft") { e.preventDefault(); turn(1); }
-    else if (e.key === "ArrowRight") { e.preventDefault(); turn(-1); }
-else if (e.key === "c" || e.key === "C") {
-      setCameraMode((m) => (m === "follow" ? "overview" : "follow"));
-    }
-  }
-  window.addEventListener("keydown", onKeyDown);
-  return () => window.removeEventListener("keydown", onKeyDown);
-}, [moveAlongHeading, turn]);
-
-
-  // Stop the page from scrolling/zooming under the on-screen touch controls.
-  useEffect(() => {
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prevOverflow;
-    };
-  }, []);
-
-
-
-const playerPos = selfIdRef.current ? players[selfIdRef.current] ?? null : null;
-
-
-useEffect(() => {
-  selfPositionRef.current = playerPos;
-}, [playerPos]);
-
-
-
-const selfFacing = selfIdRef.current ? facings[selfIdRef.current] ?? 0 : 0;
-const selfZone = playerPos ? getZone(playerPos.x, playerPos.z) : null;
-const ballZone = ballPosition ? getZone(ballPosition.x, ballPosition.z) : null;
-
-  return (
-
-
-    <div
-      style={{
-        width: "100vw",
-        height: "100dvh",
-        background: "#111",
-        position: "relative",
-        touchAction: "none",
-        overscrollBehavior: "none",
-      }}
-    >
-
-
-
-{showRiveRobot && <RiveRobot />}
-
-      <Canvas camera={{ position: [0, 14, 14], fov: 50 }}>
-
-{cameraMode === "follow" ? (
-  <FollowCamera target={playerPos} facing={heading} />
-) : (
-  <OverviewCamera />
-)}
-<Suspense fallback={null}>
-<RampZone position={zoneCenter} size={zoneSize} playerRef={selfPositionRef} />
-</Suspense>
-
-{blip && <ClickBlip key={blip.key} x={blip.x} z={blip.z} />}
-<Suspense fallback={null}>
- <Flag3D />
-</Suspense>
-
-
-        <ambientLight intensity={0.7} />
-        <directionalLight position={[5, 10, 5]} intensity={1} />
-
-<mesh rotation={[-Math.PI / 2, 0, 0]} onClick={handleGroundClick}>
-          <planeGeometry args={[ARENA_SIZE, ARENA_SIZE]} />
-          <meshStandardMaterial color="#2a2a2a" />
-        </mesh>
-
-<mesh position={[OBSTACLE.x, 0.5, OBSTACLE.z]} onClick={(e) => e.stopPropagation()}>
-  <boxGeometry args={[OBSTACLE.size, 1, OBSTACLE.size]} />
-  <ZoneMaterial active={selfZone === OBSTACLE_ZONE} color="red" />
-</mesh>
-
-
-
-
-
-
-
-
-{/* Green outlines marking the 4 map quadrants */}
-{ZONES.map((zone) => (
-  <lineLoop key={zone.id} position={[0, 0.07, 0]}>
-    <bufferGeometry>
-      <bufferAttribute
-        attach="attributes-position"
-        args={[
-          new Float32Array([
-            zone.xMin, 0, zone.zMin,
-            zone.xMax, 0, zone.zMin,
-            zone.xMax, 0, zone.zMax,
-            zone.xMin, 0, zone.zMax,
-          ]),
-          3,
-        ]}
-      />
-    </bufferGeometry>
-    <lineBasicMaterial
-      color="#00ff44"
-      linewidth={selfZone === zone.id ? 4 : 1.5}
-      transparent
-      opacity={selfZone === zone.id ? 1 : 0.35}
-    />
-  </lineLoop>
-))}
-
-{/* A soft light over each zone that switches on while you're standing in it */}
-{ZONES.map((zone) => (
-  <ZoneLight
-    key={zone.id}
-    active={selfZone === zone.id}
-    position={[(zone.xMin + zone.xMax) / 2, 10, (zone.zMin + zone.zMax) / 2]}
-  />
-))}
-
-
-
-
-
-<lineLoop
-  position={[0, 0.05, 0]}
->
-  <bufferGeometry>
-    <bufferAttribute
-      attach="attributes-position"
-      args={[
-        new Float32Array([
-          BALL_BOUNDARY.minX, 0, BALL_BOUNDARY.minZ,
-          BALL_BOUNDARY.maxX, 0, BALL_BOUNDARY.minZ,
-          BALL_BOUNDARY.maxX, 0, BALL_BOUNDARY.maxZ,
-          BALL_BOUNDARY.minX, 0, BALL_BOUNDARY.maxZ,
-        ]),
-        3,
-      ]}
-    />
-  </bufferGeometry>
-  <lineBasicMaterial color="red" linewidth={3} />
-</lineLoop>
-
-
-
-
-
-{ballPosition && (
-  <mesh position={[ballPosition.x, ballPosition.y, ballPosition.z]} castShadow onClick={handleBallClick}>
-    <sphereGeometry args={[0.5, 32, 32]} />
-<ZoneMaterial active={selfZone !== null && selfZone === ballZone} color="#ff6633" glowColor="#ff6633" />
-  </mesh>
-)}
-
-
-
-
-<mesh position={[NEW_RAMP.xStart, 0, NEW_RAMP.zMin]} onClick={(e) => e.stopPropagation()}>
-  <bufferGeometry>
-    <bufferAttribute
-      attach="attributes-position"
-      args={[
-        new Float32Array([
-          0, 0, 0,
-          0, 0, NEW_RAMP.zMax - NEW_RAMP.zMin,
-          NEW_RAMP.xEnd - NEW_RAMP.xStart, 0, 0,
-          NEW_RAMP.xEnd - NEW_RAMP.xStart, 0, NEW_RAMP.zMax - NEW_RAMP.zMin,
-          NEW_RAMP.xEnd - NEW_RAMP.xStart, NEW_RAMP.height, 0,
-          NEW_RAMP.xEnd - NEW_RAMP.xStart, NEW_RAMP.height, NEW_RAMP.zMax - NEW_RAMP.zMin,
-        ]),
-        3,
-      ]}
-    />
-
-    <bufferAttribute
-      attach="index"
-      args={[
-        new Uint16Array([
-          0, 1, 2, 1, 3, 2,
-          0, 2, 4, 2, 5, 4,
-          0, 4, 1, 4, 5, 1,
-          2, 3, 4, 3, 5, 4,
-        ]),
-        1,
-      ]}
-    />
-  </bufferGeometry>
-
-<ZoneMaterial active={selfZone === NEW_RAMP_ZONE} color="#999" side={THREE.DoubleSide} />
-</mesh>
-
-
-        {Object.entries(players).map(([id, p]) => (
-          <Robot
-            key={id}
-position={[p.x, p.y, p.z]}
-            facing={facings[id] ?? 0}
-            color={id === selfIdRef.current ? "#4da6ff" : "#ffa64d"}
-            onReady={(handle) => {
-              robotHandles.current[id] = handle;
-            }}
-          />
-        ))}
-      </Canvas>
-<CoordsDisplay position={selfIdRef.current ? players[selfIdRef.current] ?? null : null} />
-
-<DPad
-  onUp={() => moveAlongHeading(1)}
-  onDown={() => moveAlongHeading(-1)}
-  onLeft={() => turn(1)}
-  onRight={() => turn(-1)}
-  runMode={runMode}
-  onToggleRun={() => setRunMode((r) => !r)}
-/>
-      <ActionBar onAction={requestAction} />
-    </div>
-  );
-}
-
-
-
-
-function RampZone({
-  position = [0, 0, 0],
-  size = 10,
-  playerRef,
-}: {
-  position?: [number, number, number]
-  size?: number
-  playerRef: React.RefObject<PlayerState | null>
-}) {
-  const texture = useTexture('/floor/alpha.jpg')
-  const OUTER_RADIUS = 0.46
-  const INNER_RADIUS = 0.34
-  const LINE_WIDTH = 0.08
-  const BLIP_SPEED = 8
-
-  const outerR = size * OUTER_RADIUS
-  const innerR = size * INNER_RADIUS
-
-  const bandMat = useRef<THREE.MeshBasicMaterial>(null)
-  const innerAreaMat = useRef<THREE.MeshBasicMaterial>(null)
-  const outerRingMat = useRef<THREE.MeshBasicMaterial>(null)
-  const innerRingMat = useRef<THREE.MeshBasicMaterial>(null)
-
-  // Three pieces of the same picture, cut along the ring radii.
-  const { tex, innerGeo, bandGeo, outsideGeo } = useMemo(() => {
-    const tex = texture.clone()
-    tex.repeat.set(1 / size, 1 / size)   // ShapeGeometry UVs are raw x,y,
-    tex.offset.set(0.5, 0.5)             // so this maps -size/2..size/2 onto 0..1
-    tex.needsUpdate = true
-
-    const circle = (r: number) => {
-      const s = new THREE.Shape()
-      s.absarc(0, 0, r, 0, Math.PI * 2, false)
-      return s
-    }
-    const hole = (r: number) => {
-      const p = new THREE.Path()
-      p.absarc(0, 0, r, 0, Math.PI * 2, true)
-      return p
-    }
-
-    const inner = circle(innerR)
-
-    const band = circle(outerR)
-    band.holes.push(hole(innerR))
-
-    const h = size / 2
-    const outside = new THREE.Shape()
-    outside.moveTo(-h, -h)
-    outside.lineTo(h, -h)
-    outside.lineTo(h, h)
-    outside.lineTo(-h, h)
-    outside.lineTo(-h, -h)
-    outside.holes.push(hole(outerR))
-
-    return {
-      tex,
-      innerGeo: new THREE.ShapeGeometry(inner, 128),
-      bandGeo: new THREE.ShapeGeometry(band, 128),
-      outsideGeo: new THREE.ShapeGeometry(outside, 128),
-    }
-  }, [texture, size, outerR, innerR])
-
-  useFrame((state) => {
-    const p = playerRef.current
-    if (
-      !p ||
-      !bandMat.current ||
-      !innerAreaMat.current ||
-      !outerRingMat.current ||
-      !innerRingMat.current
-    ) return
-
-    const dist = Math.hypot(p.x - position[0], p.z - position[2])
-    const blip = 0.5 + 0.5 * Math.sin(state.clock.elapsedTime * BLIP_SPEED)
-
-    const inOuter = dist < outerR
-    const inInner = dist < innerR
-
-    // Outer band blips only while you're between the rings.
-    const bandBlips = inOuter && !inInner
-    bandMat.current.opacity = bandBlips ? blip : 1
-    outerRingMat.current.opacity = bandBlips ? blip : 1
-
-    // Inner disc blips only once you're inside the inner radius.
-    innerAreaMat.current.opacity = inInner ? blip : 1
-    innerRingMat.current.opacity = inInner ? blip : 1
-  })
-
-  return (
-    <group position={position} rotation-x={-Math.PI / 2}>
-      {/* everything outside the outer radius: never blips */}
-      <mesh geometry={outsideGeo}>
-        <meshBasicMaterial map={tex} />
-      </mesh>
-
-      {/* outer band (between the rings) */}
-      <mesh geometry={bandGeo}>
-        <meshBasicMaterial ref={bandMat} map={tex} transparent />
-      </mesh>
-
-      {/* inner disc */}
-      <mesh geometry={innerGeo}>
-        <meshBasicMaterial ref={innerAreaMat} map={tex} transparent />
-      </mesh>
-
-      {/* outer ring outline */}
-      <mesh position-z={0.01}>
-        <ringGeometry args={[outerR - LINE_WIDTH, outerR, 128]} />
-        <meshBasicMaterial ref={outerRingMat} color="#ff0000" transparent />
-      </mesh>
-
-      {/* inner ring outline */}
-      <mesh position-z={0.01}>
-        <ringGeometry args={[innerR - LINE_WIDTH, innerR, 128]} />
-        <meshBasicMaterial ref={innerRingMat} color="#ff0000" transparent />
-      </mesh>
-    </group>
-  )
-}
-function ClickBlip({ x, z }: { x: number; z: number }) {
+function ClickBlip({ x, y, z }: { x: number; y: number; z: number }) {
   const ref = useRef<THREE.Mesh>(null);
   const start = useRef(performance.now());
 
@@ -649,7 +95,7 @@ function ClickBlip({ x, z }: { x: number; z: number }) {
   });
 
   return (
-    <mesh ref={ref} position={[x, 0.06, z]} rotation={[-Math.PI / 2, 0, 0]}>
+<mesh ref={ref} position={[x, y + 0.06, z]} rotation={[-Math.PI / 2, 0, 0]}>
       <ringGeometry args={[0.5, 0.7, 32]} />
       <meshBasicMaterial color="#4da6ff" transparent opacity={1} />
     </mesh>
@@ -916,3 +362,683 @@ function ActionBar({ onAction }: { onAction: (action: string) => void }) {
     </div>
   );
 }
+
+
+
+function RampZone({
+  position = [0, 0, 0],
+  size = 10,
+  playerRef,
+}: {
+  position?: [number, number, number]
+  size?: number
+  playerRef: React.RefObject<PlayerState | null>
+}) {
+  const texture = useTexture('/floor/alpha.jpg')
+  const OUTER_RADIUS = 0.46
+  const INNER_RADIUS = 0.34
+  const LINE_WIDTH = 0.08
+  const BLIP_SPEED = 8
+
+  const outerR = size * OUTER_RADIUS
+  const innerR = size * INNER_RADIUS
+
+  const bandMat = useRef<THREE.MeshBasicMaterial>(null)
+  const innerAreaMat = useRef<THREE.MeshBasicMaterial>(null)
+  const outerRingMat = useRef<THREE.MeshBasicMaterial>(null)
+  const innerRingMat = useRef<THREE.MeshBasicMaterial>(null)
+
+  // Three pieces of the same picture, cut along the ring radii.
+  const { tex, innerGeo, bandGeo, outsideGeo } = useMemo(() => {
+    const tex = texture.clone()
+    tex.repeat.set(1 / size, 1 / size)   // ShapeGeometry UVs are raw x,y,
+    tex.offset.set(0.5, 0.5)             // so this maps -size/2..size/2 onto 0..1
+    tex.needsUpdate = true
+
+    const circle = (r: number) => {
+      const s = new THREE.Shape()
+      s.absarc(0, 0, r, 0, Math.PI * 2, false)
+      return s
+    }
+    const hole = (r: number) => {
+      const p = new THREE.Path()
+      p.absarc(0, 0, r, 0, Math.PI * 2, true)
+      return p
+    }
+
+    const inner = circle(innerR)
+
+    const band = circle(outerR)
+    band.holes.push(hole(innerR))
+
+    const h = size / 2
+    const outside = new THREE.Shape()
+    outside.moveTo(-h, -h)
+    outside.lineTo(h, -h)
+    outside.lineTo(h, h)
+    outside.lineTo(-h, h)
+    outside.lineTo(-h, -h)
+    outside.holes.push(hole(outerR))
+
+    return {
+      tex,
+      innerGeo: new THREE.ShapeGeometry(inner, 128),
+      bandGeo: new THREE.ShapeGeometry(band, 128),
+      outsideGeo: new THREE.ShapeGeometry(outside, 128),
+    }
+  }, [texture, size, outerR, innerR])
+
+  useFrame((state) => {
+    const p = playerRef.current
+    if (
+      !p ||
+      !bandMat.current ||
+      !innerAreaMat.current ||
+      !outerRingMat.current ||
+      !innerRingMat.current
+    ) return
+
+    const dist = Math.hypot(p.x - position[0], p.z - position[2])
+    const blip = 0.5 + 0.5 * Math.sin(state.clock.elapsedTime * BLIP_SPEED)
+
+    const inOuter = dist < outerR
+    const inInner = dist < innerR
+
+    // Outer band blips only while you're between the rings.
+    const bandBlips = inOuter && !inInner
+    bandMat.current.opacity = bandBlips ? blip : 1
+    outerRingMat.current.opacity = bandBlips ? blip : 1
+
+    // Inner disc blips only once you're inside the inner radius.
+    innerAreaMat.current.opacity = inInner ? blip : 1
+    innerRingMat.current.opacity = inInner ? blip : 1
+  })
+
+  return (
+    <group position={position} rotation-x={-Math.PI / 2}>
+      {/* everything outside the outer radius: never blips */}
+      <mesh geometry={outsideGeo}>
+        <meshBasicMaterial map={tex} />
+      </mesh>
+
+      {/* outer band (between the rings) */}
+      <mesh geometry={bandGeo}>
+        <meshBasicMaterial ref={bandMat} map={tex} transparent />
+      </mesh>
+
+      {/* inner disc */}
+      <mesh geometry={innerGeo}>
+        <meshBasicMaterial ref={innerAreaMat} map={tex} transparent />
+      </mesh>
+
+      {/* outer ring outline */}
+      <mesh position-z={0.01}>
+        <ringGeometry args={[outerR - LINE_WIDTH, outerR, 128]} />
+        <meshBasicMaterial ref={outerRingMat} color="#ff0000" transparent />
+      </mesh>
+
+      {/* inner ring outline */}
+      <mesh position-z={0.01}>
+        <ringGeometry args={[innerR - LINE_WIDTH, innerR, 128]} />
+        <meshBasicMaterial ref={innerRingMat} color="#ff0000" transparent />
+      </mesh>
+    </group>
+  )
+}
+
+
+
+
+function Building({ onClickGround }: { onClickGround: (e: any) => void }) {
+  const rampGeos = useMemo(
+    () => buildingRamps.map((r) => new ConvexGeometry(r.points.map((p) => new THREE.Vector3(...p)))),
+    []
+  );
+  // stopPropagation matters: otherwise the click also reaches the ground
+  // behind the building and overrides the target with a ground-level one.
+  const click = (e: any) => { e.stopPropagation(); onClickGround(e); };
+
+  return (
+    <group>
+      {buildingBoxes.map((b, i) => (
+        <mesh key={i} position={[b.cx, b.cy, b.cz]} onClick={click}>
+          <boxGeometry args={[b.hx * 2, b.hy * 2, b.hz * 2]} />
+          <meshStandardMaterial color="#8a8a96" transparent opacity={0.25} depthWrite={false} />
+        </mesh>
+      ))}
+      {rampGeos.map((g, i) => (
+        <mesh key={i} geometry={g} onClick={click}>
+          <meshStandardMaterial color="#c9a36b" flatShading />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+
+
+function FirstPersonCamera({ target, facing }: { target: PlayerState | null; facing: number }) {
+  const { camera } = useThree();
+  const currentAngle = useRef(facing);
+  const hasSighted = useRef(false);
+
+  useFrame((_, delta) => {
+    if (!target) return;
+
+    const eyeHeight = 1.7;
+    const lookDistance = 10;
+
+    if (!hasSighted.current) {
+      hasSighted.current = true;
+      currentAngle.current = facing;
+    } else {
+      let diff = facing - currentAngle.current;
+      diff = ((diff + Math.PI) % (Math.PI * 2)) - Math.PI;
+      const t = 1 - Math.exp(-12 * delta);
+      currentAngle.current += diff * t;
+    }
+
+    const angle = currentAngle.current;
+    camera.position.set(target.x, target.y + eyeHeight, target.z);
+    camera.up.set(0, 1, 0);
+    camera.lookAt(
+      target.x + Math.sin(angle) * lookDistance,
+      target.y + eyeHeight,
+      target.z + Math.cos(angle) * lookDistance
+    );
+  });
+
+  return null;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+export default function GamePage() {
+
+  const [players, setPlayers] = useState<Players>({});
+  const [facings, setFacings] = useState<Facings>({});
+  const [runMode, setRunMode] = useState(false);
+  const selfIdRef = useRef<string | null>(null);
+  const robotHandles = useRef<Record<string, RobotHandle>>({});
+const [ballPosition, setBallPosition] = useState<PlayerState | null>(null);
+const [heading, setHeading] = useState(0);
+const [cameraMode, setCameraMode] = useState<CameraMode>("follow");
+const [showRiveRobot, setShowRiveRobot] = useState(false);
+const riveTimerRef = useRef<number | null>(null);
+
+
+const walkPathRef = useRef<Pt[]>([]);
+const lastStepPosRef = useRef<{ x: number; z: number } | null>(null);
+const stuckStepsRef = useRef(0);
+const walkTimerRef = useRef<number | null>(null);
+const selfPositionRef = useRef<PlayerState | null>(null);
+const [blip, setBlip] = useState<{ x: number; y: number; z: number; key: number } | null>(null);
+
+const rampWidth = NEW_RAMP.xEnd - NEW_RAMP.xStart
+const rampDepth = NEW_RAMP.zMax - NEW_RAMP.zMin
+const zoneCenter: [number, number, number] = [
+  (NEW_RAMP.xStart + NEW_RAMP.xEnd) / 2,
+  0.02,
+  (NEW_RAMP.zMin + NEW_RAMP.zMax) / 2,
+]
+const zoneSize = Math.hypot(rampWidth, rampDepth) / 0.68
+
+
+  const socket = usePartySocket({
+    host: process.env.NEXT_PUBLIC_PARTYKIT_HOST!, // e.g. "localhost:1999"
+    room: "game-room",
+onMessage(event) {
+  const msg: ServerMessage = JSON.parse(event.data);
+
+  switch (msg.type) {
+case "ball": {
+  setBallPosition({ x: msg.x, y: msg.y, z: msg.z });
+  break;
+}
+        case "state": {
+          selfIdRef.current = msg.selfId;
+          setPlayers(msg.players);
+          break;
+        }
+
+ case "update": {
+  setPlayers((prev) => ({ ...prev, [msg.id]: { x: msg.x, y: msg.y, z: msg.z } }));
+console.log("update", msg.id, msg.id === selfIdRef.current ? "(me)" : "", msg.x, msg.z);
+  if (msg.dx !== 0 || msg.dz !== 0) {
+    setFacings((prev) => ({ ...prev, [msg.id]: Math.atan2(msg.dx, msg.dz) }));
+  }
+  robotHandles.current[msg.id]?.notifyMove(msg.running);
+  break;
+}
+        case "snapback": {
+  console.log("snapback", msg);
+ stopWalking();
+          const selfId = selfIdRef.current;
+          if (!selfId) return;
+  setPlayers((prev) => ({ ...prev, [selfId]: { x: msg.x, y: msg.y, z: msg.z } }));
+          break;
+        }
+        case "action": {
+          robotHandles.current[msg.id]?.notifyAction(msg.action);
+          break;
+        }
+        case "leave": {
+          setPlayers((prev) => {
+            const next = { ...prev };
+            delete next[msg.id];
+            return next;
+          });
+          delete robotHandles.current[msg.id];
+          break;
+        }
+      }
+    },
+  });
+
+
+
+
+
+const stopWalking = useCallback(() => {
+  walkPathRef.current = [];
+  lastStepPosRef.current = null;
+  stuckStepsRef.current = 0;
+  if (walkTimerRef.current !== null) {
+    window.clearTimeout(walkTimerRef.current);
+    walkTimerRef.current = null;
+  }
+}, []);
+
+
+
+const stepWalk = useCallback(() => {
+  const selfId = selfIdRef.current;
+  const current = selfPositionRef.current;
+  const path = walkPathRef.current;
+  if (!selfId || !current || path.length === 0) { stopWalking(); return; }
+
+  // Drop waypoints we've already reached.
+  const EPS = 0.5;
+  while (
+    path.length > 0 &&
+    Math.abs(current.x - path[0].x) <= EPS &&
+    Math.abs(current.z - path[0].z) <= EPS
+  ) path.shift();
+  if (path.length === 0) { stopWalking(); return; }
+
+  // Give up if we aren't actually moving (blocked by a wall, etc.).
+  const last = lastStepPosRef.current;
+  if (last && Math.hypot(current.x - last.x, current.z - last.z) < 0.3) {
+    stuckStepsRef.current += 1;
+    if (stuckStepsRef.current >= 4) { stopWalking(); return; }
+  } else {
+    stuckStepsRef.current = 0;
+  }
+  lastStepPosRef.current = { x: current.x, z: current.z };
+
+  // One step toward the next waypoint: x first, then z.
+  const wp = path[0];
+  let dx = 0;
+  let dz = 0;
+  if (Math.abs(current.x - wp.x) > EPS) dx = current.x < wp.x ? 1 : -1;
+  else dz = current.z < wp.z ? 1 : -1;
+
+  setPlayers((prev) => {
+    const cur = prev[selfId];
+    if (!cur) return prev;
+    return { ...prev, [selfId]: { x: cur.x + dx, y: cur.y, z: cur.z + dz } };
+  });
+  const moveHeading = Math.atan2(dx, dz);
+  setFacings((prev) => ({ ...prev, [selfId]: moveHeading }));
+  setHeading(moveHeading);
+  robotHandles.current[selfId]?.notifyMove(runMode);
+  socket.send(JSON.stringify({ type: "move", dx, dz, running: runMode }));
+
+  walkTimerRef.current = window.setTimeout(stepWalk, 220);
+}, [socket, runMode, stopWalking]);
+
+const handleGroundClick = useCallback(
+  (e: any) => {
+    const me = selfPositionRef.current;
+    if (!me) return;
+
+    const target = {
+      x: Math.round(e.point.x),
+      z: Math.round(e.point.z),
+      floor: Math.max(0, Math.min(3, Math.round(e.point.y / B.H))), // 0 = ground
+    };
+
+    setBlip({ x: target.x, y: e.point.y, z: target.z, key: Date.now() });
+    window.setTimeout(() => setBlip(null), 600);
+
+    walkPathRef.current = planPath(me, target);
+    stuckStepsRef.current = 0;
+    lastStepPosRef.current = null;
+    if (walkTimerRef.current === null) stepWalk();
+  },
+  [stepWalk]
+);
+
+
+
+
+
+
+
+ const moveAlongHeading = useCallback(
+  (sign: 1 | -1) => {
+stopWalking();
+    const selfId = selfIdRef.current;
+    if (!selfId) return;
+
+    // Down (sign === -1) turns the character 180° and walks forward in
+    // that new direction, instead of walking backward while still facing
+    // the old way. Since FollowCamera reads `heading` too, the camera
+    // swings around with him.
+    const moveHeading = sign === 1 ? heading : wrapAngle(heading + Math.PI);
+
+    const dx = Math.round(Math.sin(moveHeading));
+    const dz = Math.round(Math.cos(moveHeading));
+    if (dx === 0 && dz === 0) return;
+
+    setPlayers((prev) => {
+      const current = prev[selfId];
+      if (!current) return prev;
+      return { ...prev, [selfId]: { x: current.x + dx, y: current.y, z: current.z + dz } };
+    });
+    setFacings((prev) => ({ ...prev, [selfId]: moveHeading }));
+    if (sign === -1) setHeading(moveHeading);
+    robotHandles.current[selfId]?.notifyMove(runMode);
+
+    socket.send(JSON.stringify({ type: "move", dx, dz, running: runMode }));
+  },
+  [socket, runMode, heading, stopWalking]
+);
+
+const TWO_PI = Math.PI * 2;
+const wrapAngle = (a: number) => ((a % TWO_PI) + TWO_PI) % TWO_PI;
+
+const turn = useCallback((sign: 1 | -1) => {
+  stopWalking();
+
+  const selfId = selfIdRef.current;
+  setHeading((h) => {
+const next = wrapAngle(h + sign * TURN_STEP);
+    if (selfId) setFacings((prev) => ({ ...prev, [selfId]: next }));
+    return next;
+  });
+}, [stopWalking]);
+
+const handleBallClick = useCallback((e: any) => {
+  e.stopPropagation();
+setShowRiveRobot(true);
+
+if (riveTimerRef.current !== null) {
+window.clearTimeout(riveTimerRef.current);
+}
+
+riveTimerRef.current = window.setTimeout(() => {
+setShowRiveRobot(false);
+riveTimerRef.current = null;
+}, 1500);
+}, []);
+
+
+
+  const requestAction = useCallback(
+    (action: string) => {
+      const selfId = selfIdRef.current;
+      if (!selfId) return;
+      robotHandles.current[selfId]?.notifyAction(action); // optimistic, cosmetic only
+      socket.send(JSON.stringify({ type: "action", action }));
+    },
+    [socket]
+  );
+
+  // Desktop keyboard support.
+useEffect(() => {
+  function onKeyDown(e: KeyboardEvent) {
+    if (e.key === "ArrowUp") { e.preventDefault(); moveAlongHeading(1); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); moveAlongHeading(-1); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); turn(1); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); turn(-1); }
+else if (e.key === "c" || e.key === "C") {
+  setCameraMode(nextCameraMode);
+}
+  }
+  window.addEventListener("keydown", onKeyDown);
+  return () => window.removeEventListener("keydown", onKeyDown);
+}, [moveAlongHeading, turn]);
+
+
+  // Stop the page from scrolling/zooming under the on-screen touch controls.
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevOverflow;
+    };
+  }, []);
+
+
+
+const playerPos = selfIdRef.current ? players[selfIdRef.current] ?? null : null;
+
+
+useEffect(() => {
+  selfPositionRef.current = playerPos;
+}, [playerPos]);
+
+
+
+
+const selfFacing = selfIdRef.current ? facings[selfIdRef.current] ?? 0 : 0;
+const selfZone = playerPos ? getZone(playerPos.x, playerPos.z) : null;
+const ballZone = ballPosition ? getZone(ballPosition.x, ballPosition.z) : null;
+
+  return (
+
+
+    <div
+      style={{
+        width: "100vw",
+        height: "100dvh",
+        background: "#111",
+        position: "relative",
+        touchAction: "none",
+        overscrollBehavior: "none",
+      }}
+    >
+
+
+
+{showRiveRobot && <RiveRobot />}
+
+      <Canvas camera={{ position: [0, 14, 14], fov: 50 }}>
+
+
+<Building onClickGround={handleGroundClick} />
+
+{cameraMode === "follow" && <FollowCamera target={playerPos} facing={heading} />}
+{cameraMode === "first" && <FirstPersonCamera target={playerPos} facing={heading} />}
+{cameraMode === "overview" && <OverviewCamera />}
+
+<Suspense fallback={null}>
+<RampZone position={zoneCenter} size={zoneSize} playerRef={selfPositionRef} />
+</Suspense>
+
+{blip && <ClickBlip key={blip.key} x={blip.x} y={blip.y} z={blip.z} />}
+<Suspense fallback={null}>
+ <Flag3D />
+</Suspense>
+
+
+        <ambientLight intensity={0.7} />
+        <directionalLight position={[5, 10, 5]} intensity={1} />
+
+<mesh rotation={[-Math.PI / 2, 0, 0]} onClick={handleGroundClick}>
+          <planeGeometry args={[ARENA_SIZE, ARENA_SIZE]} />
+          <meshStandardMaterial color="#2a2a2a" />
+        </mesh>
+
+<mesh position={[OBSTACLE.x, 0.5, OBSTACLE.z]} onClick={(e) => e.stopPropagation()}>
+  <boxGeometry args={[OBSTACLE.size, 1, OBSTACLE.size]} />
+  <ZoneMaterial active={selfZone === OBSTACLE_ZONE} color="red" />
+</mesh>
+
+
+
+
+
+
+
+
+{/* Green outlines marking the 4 map quadrants */}
+{ZONES.map((zone) => (
+  <lineLoop key={zone.id} position={[0, 0.07, 0]}>
+    <bufferGeometry>
+      <bufferAttribute
+        attach="attributes-position"
+        args={[
+          new Float32Array([
+            zone.xMin, 0, zone.zMin,
+            zone.xMax, 0, zone.zMin,
+            zone.xMax, 0, zone.zMax,
+            zone.xMin, 0, zone.zMax,
+          ]),
+          3,
+        ]}
+      />
+    </bufferGeometry>
+    <lineBasicMaterial
+      color="#00ff44"
+      linewidth={selfZone === zone.id ? 4 : 1.5}
+      transparent
+      opacity={selfZone === zone.id ? 1 : 0.35}
+    />
+  </lineLoop>
+))}
+
+{/* A soft light over each zone that switches on while you're standing in it */}
+{ZONES.map((zone) => (
+  <ZoneLight
+    key={zone.id}
+    active={selfZone === zone.id}
+    position={[(zone.xMin + zone.xMax) / 2, 10, (zone.zMin + zone.zMax) / 2]}
+  />
+))}
+
+
+
+
+
+<lineLoop
+  position={[0, 0.05, 0]}
+>
+  <bufferGeometry>
+    <bufferAttribute
+      attach="attributes-position"
+      args={[
+        new Float32Array([
+          BALL_BOUNDARY.minX, 0, BALL_BOUNDARY.minZ,
+          BALL_BOUNDARY.maxX, 0, BALL_BOUNDARY.minZ,
+          BALL_BOUNDARY.maxX, 0, BALL_BOUNDARY.maxZ,
+          BALL_BOUNDARY.minX, 0, BALL_BOUNDARY.maxZ,
+        ]),
+        3,
+      ]}
+    />
+  </bufferGeometry>
+  <lineBasicMaterial color="red" linewidth={3} />
+</lineLoop>
+
+
+
+
+
+{ballPosition && (
+  <mesh position={[ballPosition.x, ballPosition.y, ballPosition.z]} castShadow onClick={handleBallClick}>
+    <sphereGeometry args={[0.5, 32, 32]} />
+<ZoneMaterial active={selfZone !== null && selfZone === ballZone} color="#ff6633" glowColor="#ff6633" />
+  </mesh>
+)}
+
+
+
+
+<mesh position={[NEW_RAMP.xStart, 0, NEW_RAMP.zMin]} >
+  <bufferGeometry>
+    <bufferAttribute
+      attach="attributes-position"
+      args={[
+        new Float32Array([
+          0, 0, 0,
+          0, 0, NEW_RAMP.zMax - NEW_RAMP.zMin,
+          NEW_RAMP.xEnd - NEW_RAMP.xStart, 0, 0,
+          NEW_RAMP.xEnd - NEW_RAMP.xStart, 0, NEW_RAMP.zMax - NEW_RAMP.zMin,
+          NEW_RAMP.xEnd - NEW_RAMP.xStart, NEW_RAMP.height, 0,
+          NEW_RAMP.xEnd - NEW_RAMP.xStart, NEW_RAMP.height, NEW_RAMP.zMax - NEW_RAMP.zMin,
+        ]),
+        3,
+      ]}
+    />
+
+    <bufferAttribute
+      attach="index"
+      args={[
+        new Uint16Array([
+          0, 1, 2, 1, 3, 2,
+          0, 2, 4, 2, 5, 4,
+          0, 4, 1, 4, 5, 1,
+          2, 3, 4, 3, 5, 4,
+        ]),
+        1,
+      ]}
+    />
+  </bufferGeometry>
+
+<ZoneMaterial active={selfZone === NEW_RAMP_ZONE} color="#999" side={THREE.DoubleSide} />
+</mesh>
+
+
+        {Object.entries(players).map(([id, p]) => 
+ id === selfIdRef.current && cameraMode === "first" ? null :
+(
+          <Robot
+            key={id}
+position={[p.x, p.y, p.z]}
+            facing={facings[id] ?? 0}
+            color={id === selfIdRef.current ? "#4da6ff" : "#ffa64d"}
+            onReady={(handle) => {
+              robotHandles.current[id] = handle;
+            }}
+          />
+        ))}
+      </Canvas>
+<CoordsDisplay position={selfIdRef.current ? players[selfIdRef.current] ?? null : null} />
+
+<DPad
+  onUp={() => moveAlongHeading(1)}
+  onDown={() => moveAlongHeading(-1)}
+  onLeft={() => turn(1)}
+  onRight={() => turn(-1)}
+  runMode={runMode}
+  onToggleRun={() => setRunMode((r) => !r)}
+/>
+      <ActionBar onAction={requestAction} />
+    </div>
+  );
+}
+
+
+
+
