@@ -10,8 +10,8 @@ mapboxgl.accessToken = ''; // better: read from an env variable
 type Props = {
   location: Landmark | null;          // null = popup hidden
   onClose?: () => void;
-  width?: number;                     // popup size in px
-  height?: number;
+  width?: number | string;     // ← was number
+  height?: number | string;    // ← was number
   style?: React.CSSProperties;        // override position, e.g. { top: 16, left: 16 }
 };
 
@@ -23,7 +23,7 @@ export default function MapComponent({
   style,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const coordinatesRef = useRef<[number, number]>();
+const coordinatesRef = useRef<[number, number] | undefined>(undefined);
   const [map, setMap] = useState<mapboxgl.Map | null>(null);
 
   // Create the map once

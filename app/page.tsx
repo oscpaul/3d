@@ -15,7 +15,7 @@ import RiveRobot from "@/components/RiveRobot";
 import { ActiveCollisionTypes } from '@dimforge/rapier3d-compat'
 
 import { pickRandomLandmark, type Landmark } from '@/components/landmarks';
-import { RigidBody, CylinderCollider, CuboidCollider } from '@react-three/rapier'
+import { RigidBody, CylinderCollider, CuboidCollider, type RapierRigidBody } from '@react-three/rapier'
 import { Physics } from '@react-three/rapier'
 const NEW_RAMP = { xStart: 6, xEnd: 16, zMin: 15, zMax: 25, height: 5 };
 const ARENA_SIZE = 200;
@@ -497,7 +497,7 @@ function RampZone_old({
 
 function RampZone({
   position = [0, 0, 0],
-  size,
+  size =10,
 }: {
   position?: [number, number, number]
   size?: number
@@ -970,8 +970,7 @@ useEffect(() => {
 }, [playerPos]);
 
 
-const self = players[selfIdRef.current]
-
+const self = selfIdRef.current ? players[selfIdRef.current] : undefined;
 
 function SelfSensorBody({ x, y, z }: { x: number; y: number; z: number }) {
   const body = useRef<RapierRigidBody>(null)
@@ -1045,7 +1044,7 @@ const ballZone = ballPosition ? getZone(ballPosition.x, ballPosition.z) : null;
 <Suspense fallback={null}>
  <Flag3D />
 </Suspense>
- <Physics debug="true">
+ <Physics debug>
 {self && <SelfSensorBody x={self.x} y={self.y} z={self.z} />}
 
 <Building onClickGround={handleGroundClick} />
