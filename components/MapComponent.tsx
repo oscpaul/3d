@@ -5,7 +5,7 @@ import { createMovableLayer } from './MovableLayer';
 import type { Landmark } from './landmarks';
 import 'mapbox-gl/dist/mapbox-gl.css';
 
-mapboxgl.accessToken = ''; // better: read from an env variable
+mapboxgl.accessToken = 'process.env.NEXT_MAPBOX_KEY!'; // better: read from an env variable
 
 type Props = {
   location: Landmark | null;          // null = popup hidden
