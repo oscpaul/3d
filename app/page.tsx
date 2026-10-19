@@ -8,12 +8,15 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import usePartySocket from "partysocket/react";
 import Robot, { type RobotHandle } from "@/components/Robot";
+import MapComponent from "@/components/MapComponent";
 import Flag3D from "@/components/Flag3D";
 import { useTexture } from '@react-three/drei'
 import RiveRobot from "@/components/RiveRobot";
+import { ActiveCollisionTypes } from '@dimforge/rapier3d-compat'
 
-
-
+import { pickRandomLandmark, type Landmark } from '@/components/landmarks';
+import { RigidBody, CylinderCollider, CuboidCollider } from '@react-three/rapier'
+import { Physics } from '@react-three/rapier'
 const NEW_RAMP = { xStart: 6, xEnd: 16, zMin: 15, zMax: 25, height: 5 };
 const ARENA_SIZE = 200;
 const OBSTACLE = { x: 0, z: 0, size: 3 };
@@ -365,7 +368,7 @@ function ActionBar({ onAction }: { onAction: (action: string) => void }) {
 
 
 
-function RampZone({
+function RampZone_old({
   position = [0, 0, 0],
   size = 10,
   playerRef,
@@ -489,6 +492,133 @@ function RampZone({
 
 
 
+
+
+
+function RampZone({
+  position = [0, 0, 0],
+  size,
+}: {
+  position?: [number, number, number]
+  size?: number
+}) {
+  const texture = useTexture('/floor/alpha.jpg')
+  const OUTER_RADIUS = 0.46
+  const INNER_RADIUS = 0.34
+  const LINE_WIDTH = 0.08
+  const BLIP_SPEED = 8
+
+  const outerR = size * OUTER_RADIUS
+  const innerR = size * INNER_RADIUS
+
+  const bandMat = useRef<THREE.MeshBasicMaterial>(null)
+  const innerAreaMat = useRef<THREE.MeshBasicMaterial>(null)
+  const outerRingMat = useRef<THREE.MeshBasicMaterial>(null)
+  const innerRingMat = useRef<THREE.MeshBasicMaterial>(null)
+
+  const inOuter = useRef(false)
+  const inInner = useRef(false)
+
+  const isPlayer = (other: any) => other.rigidBodyObject?.name === 'player'
+
+  const { tex, innerGeo, bandGeo, outsideGeo } = useMemo(() => {
+    const tex = texture.clone()
+    tex.repeat.set(1 / size, 1 / size)
+    tex.offset.set(0.5, 0.5)
+    tex.needsUpdate = true
+
+    const circle = (r: number) => {
+      const s = new THREE.Shape()
+      s.absarc(0, 0, r, 0, Math.PI * 2, false)
+      return s
+    }
+    const hole = (r: number) => {
+      const p = new THREE.Path()
+      p.absarc(0, 0, r, 0, Math.PI * 2, true)
+      return p
+    }
+
+    const inner = circle(innerR)
+
+    const band = circle(outerR)
+    band.holes.push(hole(innerR))
+
+    const h = size / 2
+    const outside = new THREE.Shape()
+    outside.moveTo(-h, -h)
+    outside.lineTo(h, -h)
+    outside.lineTo(h, h)
+    outside.lineTo(-h, h)
+    outside.lineTo(-h, -h)
+    outside.holes.push(hole(outerR))
+
+    return {
+      tex,
+      innerGeo: new THREE.ShapeGeometry(inner, 128),
+      bandGeo: new THREE.ShapeGeometry(band, 128),
+      outsideGeo: new THREE.ShapeGeometry(outside, 128),
+    }
+  }, [texture, size, outerR, innerR])
+
+  useFrame((state) => {
+    if (!bandMat.current || !innerAreaMat.current ||
+        !outerRingMat.current || !innerRingMat.current) return
+
+    const blip = 0.5 + 0.5 * Math.sin(state.clock.elapsedTime * BLIP_SPEED)
+
+    const bandBlips = inOuter.current && !inInner.current
+    bandMat.current.opacity = bandBlips ? blip : 1
+    outerRingMat.current.opacity = bandBlips ? blip : 1
+
+    innerAreaMat.current.opacity = inInner.current ? blip : 1
+    innerRingMat.current.opacity = inInner.current ? blip : 1
+  })
+
+  return (
+    <RigidBody type="fixed" colliders={false} position={position}>
+      <CylinderCollider
+        sensor
+        args={[2, outerR]}
+        onIntersectionEnter={({ other }) => { if (isPlayer(other)) inOuter.current = true }}
+        onIntersectionExit={({ other }) => { if (isPlayer(other)) inOuter.current = false }}
+      />
+      <CylinderCollider
+        sensor
+        args={[2, innerR]}
+        onIntersectionEnter={({ other }) => { if (isPlayer(other)) inInner.current = true }}
+        onIntersectionExit={({ other }) => { if (isPlayer(other)) inInner.current = false }}
+      />
+
+      <group rotation-x={-Math.PI / 2}>
+        <mesh geometry={outsideGeo}>
+          <meshBasicMaterial map={tex} />
+        </mesh>
+
+        <mesh geometry={bandGeo}>
+          <meshBasicMaterial ref={bandMat} map={tex} transparent />
+        </mesh>
+
+        <mesh geometry={innerGeo}>
+          <meshBasicMaterial ref={innerAreaMat} map={tex} transparent />
+        </mesh>
+
+        <mesh position-z={0.01}>
+          <ringGeometry args={[outerR - LINE_WIDTH, outerR, 128]} />
+          <meshBasicMaterial ref={outerRingMat} color="#ff0000" transparent />
+        </mesh>
+
+        <mesh position-z={0.01}>
+          <ringGeometry args={[innerR - LINE_WIDTH, innerR, 128]} />
+          <meshBasicMaterial ref={innerRingMat} color="#ff0000" transparent />
+        </mesh>
+      </group>
+    </RigidBody>
+  )
+}
+
+
+
+
 function Building({ onClickGround }: { onClickGround: (e: any) => void }) {
   const rampGeos = useMemo(
     () => buildingRamps.map((r) => new ConvexGeometry(r.points.map((p) => new THREE.Vector3(...p)))),
@@ -575,6 +705,8 @@ const [cameraMode, setCameraMode] = useState<CameraMode>("follow");
 const [showRiveRobot, setShowRiveRobot] = useState(false);
 const riveTimerRef = useRef<number | null>(null);
 
+  const [landmark, setLandmark] = useState<Landmark | null>(null);   // add this
+
 
 const walkPathRef = useRef<Pt[]>([]);
 const lastStepPosRef = useRef<{ x: number; z: number } | null>(null);
@@ -612,7 +744,6 @@ case "ball": {
 
  case "update": {
   setPlayers((prev) => ({ ...prev, [msg.id]: { x: msg.x, y: msg.y, z: msg.z } }));
-console.log("update", msg.id, msg.id === selfIdRef.current ? "(me)" : "", msg.x, msg.z);
   if (msg.dx !== 0 || msg.dz !== 0) {
     setFacings((prev) => ({ ...prev, [msg.id]: Math.atan2(msg.dx, msg.dz) }));
   }
@@ -839,6 +970,30 @@ useEffect(() => {
 }, [playerPos]);
 
 
+const self = players[selfIdRef.current]
+
+
+function SelfSensorBody({ x, y, z }: { x: number; y: number; z: number }) {
+  const body = useRef<RapierRigidBody>(null)
+
+  useFrame(() => {
+    body.current?.setNextKinematicTranslation({ x, y, z })
+  })
+
+  return (
+    <RigidBody
+      ref={body}
+      type="kinematicPosition"
+      name="player"
+      position={[x, y, z]}
+      colliders={false}
+    >
+      <CuboidCollider args={[0.4, 0.9, 0.4]} activeCollisionTypes={ActiveCollisionTypes.ALL} />
+    </RigidBody>
+  )
+}
+
+
 
 
 const selfFacing = selfIdRef.current ? facings[selfIdRef.current] ?? 0 : 0;
@@ -860,11 +1015,38 @@ const ballZone = ballPosition ? getZone(ballPosition.x, ballPosition.z) : null;
     >
 
 
+<button
+  onClick={() => setLandmark(landmark ? null : pickRandomLandmark())}
+  style={{
+    position: 'absolute',
+    top: 16,
+    right: 16,
+    zIndex: 30,
+    width: 44,
+    height: 44,
+    borderRadius: '50%',
+    border: 'none',
+    background: '#3b82f6',
+    color: '#fff',
+    fontSize: 22,
+    cursor: 'pointer',
+    boxShadow: '0 4px 12px rgba(0,0,0,.3)',
+  }}
+  aria-label="Toggle map"
+>
+  🗺️
+</button>
+
+<MapComponent location={landmark} onClose={() => setLandmark(null)} />
 
 {showRiveRobot && <RiveRobot />}
 
       <Canvas camera={{ position: [0, 14, 14], fov: 50 }}>
-
+<Suspense fallback={null}>
+ <Flag3D />
+</Suspense>
+ <Physics debug="true">
+{self && <SelfSensorBody x={self.x} y={self.y} z={self.z} />}
 
 <Building onClickGround={handleGroundClick} />
 
@@ -873,13 +1055,11 @@ const ballZone = ballPosition ? getZone(ballPosition.x, ballPosition.z) : null;
 {cameraMode === "overview" && <OverviewCamera />}
 
 <Suspense fallback={null}>
-<RampZone position={zoneCenter} size={zoneSize} playerRef={selfPositionRef} />
+<RampZone position={zoneCenter} size={zoneSize} />
 </Suspense>
 
 {blip && <ClickBlip key={blip.key} x={blip.x} y={blip.y} z={blip.z} />}
-<Suspense fallback={null}>
- <Flag3D />
-</Suspense>
+
 
 
         <ambientLight intensity={0.7} />
@@ -927,6 +1107,7 @@ const ballZone = ballPosition ? getZone(ballPosition.x, ballPosition.z) : null;
     />
   </lineLoop>
 ))}
+
 
 {/* A soft light over each zone that switches on while you're standing in it */}
 {ZONES.map((zone) => (
@@ -1006,7 +1187,8 @@ const ballZone = ballPosition ? getZone(ballPosition.x, ballPosition.z) : null;
     />
   </bufferGeometry>
 
-<ZoneMaterial active={selfZone === NEW_RAMP_ZONE} color="#999" side={THREE.DoubleSide} />
+{/* <ZoneMaterial active={selfZone === NEW_RAMP_ZONE} color="#999" side={THREE.DoubleSide} />*/}
+<meshStandardMaterial color="#999" side={THREE.DoubleSide} />
 </mesh>
 
 
@@ -1023,6 +1205,7 @@ position={[p.x, p.y, p.z]}
             }}
           />
         ))}
+</Physics>
       </Canvas>
 <CoordsDisplay position={selfIdRef.current ? players[selfIdRef.current] ?? null : null} />
 
