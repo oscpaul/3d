@@ -5,7 +5,7 @@ import { createMovableLayer } from './MovableLayer';
 import type { Landmark } from './landmarks';
 import 'mapbox-gl/dist/mapbox-gl.css';
 
-mapboxgl.accessToken = 'pk.eyJ1Ijoib3NjYWlwYXVsIiwiYSI6ImNtdmJxazlicDAwOXoyeHBtYWkwdzJqOGgifQ.0AaV8n3KWhAzHpBi9rvxqQ'; // better: read from an env variable
+mapboxgl.accessToken = "pk.eyJ1Ijoib3NjYWlwYXVsIiwiYSI6ImNtdmJxazlicDAwOXoyeHBtYWkwdzJqOGgifQ.0AaV8n3KWhAzHpBi9rvxqQ"; // better: read from an env variable
 
 type Props = {
   location: Landmark | null;          // null = popup hidden
@@ -18,8 +18,8 @@ type Props = {
 export default function MapComponent({
   location,
   onClose,
-  width = "50vw",
-  height = "50vh",
+  width = "20vw",
+  height = "20vh",
   style,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -86,7 +86,7 @@ const coordinatesRef = useRef<[number, number] | undefined>(undefined);
       style={{
         position: 'absolute',
         bottom: 16,
-        right: "50%",
+        right: "0%",
         width,
         height,
         zIndex: 20,

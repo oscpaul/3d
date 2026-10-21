@@ -12,6 +12,7 @@ import MapComponent from "@/components/MapComponent";
 import Flag3D from "@/components/Flag3D";
 import { useTexture } from '@react-three/drei'
 import RiveRobot from "@/components/RiveRobot";
+import TriggerZones from "@/components/TriggerZones";
 import { ActiveCollisionTypes } from '@dimforge/rapier3d-compat'
 
 import { pickRandomLandmark, type Landmark } from '@/components/landmarks';
@@ -685,6 +686,25 @@ function FirstPersonCamera({ target, facing }: { target: PlayerState | null; fac
 
 
 
+function SelfSensorBody({ x, y, z }: { x: number; y: number; z: number }) {
+  const body = useRef<RapierRigidBody>(null)
+
+  useFrame(() => {
+    body.current?.setNextKinematicTranslation({ x, y, z })
+  })
+
+  return (
+    <RigidBody
+      ref={body}
+      type="kinematicPosition"
+      name="player"
+      position={[x, y, z]}
+      colliders={false}
+    >
+      <CuboidCollider args={[0.4, 0.9, 0.4]} activeCollisionTypes={ActiveCollisionTypes.ALL} />
+    </RigidBody>
+  )
+}
 
 
 
@@ -839,6 +859,7 @@ const stepWalk = useCallback(() => {
 
 const handleGroundClick = useCallback(
   (e: any) => {
+
     const me = selfPositionRef.current;
     if (!me) return;
 
@@ -972,25 +993,6 @@ useEffect(() => {
 
 const self = selfIdRef.current ? players[selfIdRef.current] : undefined;
 
-function SelfSensorBody({ x, y, z }: { x: number; y: number; z: number }) {
-  const body = useRef<RapierRigidBody>(null)
-
-  useFrame(() => {
-    body.current?.setNextKinematicTranslation({ x, y, z })
-  })
-
-  return (
-    <RigidBody
-      ref={body}
-      type="kinematicPosition"
-      name="player"
-      position={[x, y, z]}
-      colliders={false}
-    >
-      <CuboidCollider args={[0.4, 0.9, 0.4]} activeCollisionTypes={ActiveCollisionTypes.ALL} />
-    </RigidBody>
-  )
-}
 
 
 
@@ -1038,6 +1040,7 @@ const ballZone = ballPosition ? getZone(ballPosition.x, ballPosition.z) : null;
 
 <MapComponent location={landmark} onClose={() => setLandmark(null)} />
 
+
 {showRiveRobot && <RiveRobot />}
 
       <Canvas camera={{ position: [0, 14, 14], fov: 50 }}>
@@ -1045,6 +1048,7 @@ const ballZone = ballPosition ? getZone(ballPosition.x, ballPosition.z) : null;
  <Flag3D />
 </Suspense>
  <Physics debug>
+<TriggerZones />
 {self && <SelfSensorBody x={self.x} y={self.y} z={self.z} />}
 
 <Building onClickGround={handleGroundClick} />
@@ -1206,6 +1210,11 @@ position={[p.x, p.y, p.z]}
         ))}
 </Physics>
       </Canvas>
+
+
+
+
+
 <CoordsDisplay position={selfIdRef.current ? players[selfIdRef.current] ?? null : null} />
 
 <DPad
