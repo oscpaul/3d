@@ -14,6 +14,7 @@ import { useTexture } from '@react-three/drei'
 import RiveRobot from "@/components/RiveRobot";
 import TriggerZones from "@/components/TriggerZones";
 import { ActiveCollisionTypes } from '@dimforge/rapier3d-compat'
+import HauntedHouse from "@/components/HauntedHouse";
 
 import { pickRandomLandmark, type Landmark } from '@/components/landmarks';
 import { RigidBody, CylinderCollider, CuboidCollider, type RapierRigidBody } from '@react-three/rapier'
@@ -1001,6 +1002,24 @@ const selfFacing = selfIdRef.current ? facings[selfIdRef.current] ?? 0 : 0;
 const selfZone = playerPos ? getZone(playerPos.x, playerPos.z) : null;
 const ballZone = ballPosition ? getZone(ballPosition.x, ballPosition.z) : null;
 
+
+const AISLE = 8;   // distance from the aisle centre to each row
+const STEP = 16;    // spacing between houses (must be > 2 * bigRadius)
+const COUNT = 5;
+const OFFSET_X = -20;
+const OFFSET_Z = 10;
+
+const HOUSES: { name: string; pos: [number, number, number]; rot: number }[] = [];
+for (const side of [-1, 1]) {
+  for (let i = 0; i < COUNT; i++) {
+    HOUSES.push({
+      name: `house-${side === -1 ? "L" : "R"}${i}`,
+      pos: [side * AISLE + OFFSET_X, 0, i * STEP + OFFSET_Z],
+      rot: side === -1 ? Math.PI / 2 : -Math.PI / 2,   // door faces the aisle
+    });
+  }
+}
+
   return (
 
 
@@ -1044,11 +1063,28 @@ const ballZone = ballPosition ? getZone(ballPosition.x, ballPosition.z) : null;
 {showRiveRobot && <RiveRobot />}
 
       <Canvas camera={{ position: [0, 14, 14], fov: 50 }}>
+ 
+
 <Suspense fallback={null}>
  <Flag3D />
 </Suspense>
  <Physics debug>
-<TriggerZones />
+
+<Suspense fallback={null}>
+  {HOUSES.map((h) => (
+    <HauntedHouse
+ key={h.name}
+ name={h.name}
+ position={h.pos}
+ rotationY={h.rot}
+      onEnterSmall={() => setLandmark((prev) => prev ?? pickRandomLandmark())}
+      onLeaveSmall={() => setLandmark(null)
+} />
+  ))}
+</Suspense>
+
+
+
 {self && <SelfSensorBody x={self.x} y={self.y} z={self.z} />}
 
 <Building onClickGround={handleGroundClick} />

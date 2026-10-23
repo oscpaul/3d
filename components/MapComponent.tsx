@@ -5,9 +5,13 @@ import { createMovableLayer } from './MovableLayer';
 import type { Landmark } from './landmarks';
 import 'mapbox-gl/dist/mapbox-gl.css';
 
+<<<<<<< HEAD
 mapboxgl.accessToken =
   process.env.NEXT_PUBLIC_MAPBOX_TOKEN ||
   'pk.eyJ1Ijoib3NjYWlwYXVsIiwiYSI6ImNtdmJxazlicDAwOXoyeHBtYWkwdzJqOGgifQ.0AaV8n3KWhAzHpBi9rvxqQ';
+=======
+
+>>>>>>> 35c4a5f (haunted)
 
 type Props = {
   location: Landmark | null;          // null = popup hidden
@@ -20,8 +24,8 @@ type Props = {
 export default function MapComponent({
   location,
   onClose,
-  width = "20vw",
-  height = "20vh",
+  width = "40vw",
+  height = "40vh",
   style,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
