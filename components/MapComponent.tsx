@@ -5,13 +5,7 @@ import { createMovableLayer } from './MovableLayer';
 import type { Landmark } from './landmarks';
 import 'mapbox-gl/dist/mapbox-gl.css';
 
-<<<<<<< HEAD
-mapboxgl.accessToken =
-  process.env.NEXT_PUBLIC_MAPBOX_TOKEN ||
-  'pk.eyJ1Ijoib3NjYWlwYXVsIiwiYSI6ImNtdmJxazlicDAwOXoyeHBtYWkwdzJqOGgifQ.0AaV8n3KWhAzHpBi9rvxqQ';
-=======
 
->>>>>>> 35c4a5f (haunted)
 
 type Props = {
   location: Landmark | null;          // null = popup hidden
